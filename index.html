@@ -1,40 +1,46 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full bg-zinc-950 text-zinc-100">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Unity APK Extractor</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    .drop-zone { transition: all 0.3s ease; }
-    .drop-zone.dragover { background-color: #1e3a8a; border-color: #3b82f6; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unity APK Extractor & Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="bg-zinc-950 text-zinc-100">
-  <div class="max-w-6xl mx-auto p-8">
-    <h1 class="text-4xl font-bold text-center mb-2">Unity APK Extractor</h1>
-    <p class="text-center text-zinc-400 mb-10">Local APK → Mesh & Asset Extractor</p>
+<body class="h-screen flex flex-col overflow-hidden">
 
-    <div id="dropZone" class="drop-zone border-2 border-dashed border-zinc-700 rounded-3xl p-20 text-center cursor-pointer hover:border-blue-500">
-      <div class="text-8xl mb-6">📦</div>
-      <p class="text-2xl font-medium mb-3">Drop APK file here</p>
-      <p class="text-zinc-500">or click to browse</p>
-      <input type="file" id="fileInput" class="hidden" accept=".apk,.unity3d">
-    </div>
+    <header class="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900">
+        <h1 class="font-bold text-lg text-amber-500">Unity APK Extractor 2.0</h1>
+        <div id="dropZone" class="cursor-pointer border-2 border-dashed border-zinc-700 px-6 py-2 rounded-lg hover:border-blue-500 transition">
+            Load APK
+            <input type="file" id="fileInput" class="hidden">
+        </div>
+    </header>
 
-    <div class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div class="bg-zinc-900 rounded-2xl p-6 h-96 overflow-auto">
-        <h3 class="font-semibold text-emerald-400 mb-4">Terminal</h3>
-        <div id="logs" class="font-mono text-sm text-zinc-300 space-y-1"></div>
-      </div>
+    <main class="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
+        
+        <section id="viewport" class="flex-1 bg-black rounded-2xl border border-zinc-800 relative overflow-hidden shadow-inner">
+            <canvas id="renderCanvas" class="w-full h-full"></canvas>
+            <div id="gui-overlay" class="absolute inset-0 pointer-events-none p-6">
+                <div class="absolute bottom-10 left-10 w-24 h-24 border-4 border-zinc-500/50 rounded-full"></div> </div>
+        </section>
 
-      <div class="bg-zinc-900 rounded-2xl p-6 h-96 overflow-auto">
-        <h3 class="font-semibold text-amber-400 mb-4">Assets Found (<span id="count">0</span>)</h3>
-        <ul id="assetList" class="space-y-2"></ul>
-      </div>
-    </div>
-  </div>
+        <section class="h-1/3 grid grid-cols-3 gap-4">
+            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4">
+                <h2 class="text-xs font-bold uppercase text-zinc-500 mb-2">Live Scanner</h2>
+                <div id="logs" class="flex-1 overflow-y-auto text-xs font-mono"></div>
+            </div>
+            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4">
+                <h2 class="text-xs font-bold uppercase text-zinc-500 mb-2">3D Models</h2>
+                <ul id="modelList" class="flex-1 overflow-y-auto"></ul>
+            </div>
+            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4">
+                <h2 class="text-xs font-bold uppercase text-zinc-500 mb-2">All Assets</h2>
+                <ul id="assetList" class="flex-1 overflow-y-auto"></ul>
+            </div>
+        </section>
+    </main>
 
-  <script src="js/main.js"></script>
+    <script src="js/main.js"></script>
 </body>
 </html>
