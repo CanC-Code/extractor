@@ -1,8 +1,10 @@
 #!/bin/bash
 
+# Clean previous build
+rm -f ../build/parser.js ../build/parser.wasm ../build/Text.txt 2>/dev/null
 mkdir -p ../build
 
-echo "🚀 Starting Emscripten build..."
+echo "🚀 Starting clean Emscripten build..."
 
 emcc asset_parser.cpp \
     -o ../build/parser.js \
@@ -14,13 +16,15 @@ emcc asset_parser.cpp \
     -s EXPORTED_FUNCTIONS='["_process_unity_archive","_process_chunk","_deinterleave_mesh","_malloc","_free"]' \
     --no-entry \
     -s SINGLE_FILE=0 \
-    -s MODULARIZE=0
+    -s MODULARIZE=0 \
+    -s ENVIRONMENT=web,worker
 
-echo "=== Build Output Files ==="
+echo "=== Build Output ==="
 ls -la ../build/
 
 if [ -f ../build/parser.js ] && [ -f ../build/parser.wasm ]; then
-    echo "🎉 SUCCESS: Both parser.js and parser.wasm generated!"
+    echo "🎉 SUCCESS: Both files generated!"
+    echo "parser.js size: $(wc -c < ../build/parser.js) bytes"
 else
-    echo "⚠️  WARNING: Missing one or more files!"
+    echo "❌ Failed to generate parser.js"
 fi
