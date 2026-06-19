@@ -72,10 +72,15 @@ function log(msg, type = 'info') {
 function initWorker() {
     try {
         worker = new Worker('js/worker.js');
+        
+        // Catch critical network errors (like 404 for worker.js itself)
+        worker.onerror = (err) => {
+            log(`Critical Worker Error: ${err.message || 'Failed to load worker script (check console)'}`, 'error');
+        };
+
         worker.onmessage = (e) => {
             const response = e.data;
             
-            // Handle standard lifecycle & command responses from worker.js
             if (response.type === 'READY') {
                 isWorkerReady = true;
                 log("WASM Runtime initialized and worker ready.", "success");
@@ -135,7 +140,7 @@ function handleAssetDiscovery(data) {
  */
 function handleFile(file) {
     if (!isWorkerReady) {
-        log(`Cannot process ${file.name}. WebAssembly environment is still loading.`, 'error');
+        log(`Cannot process ${file.name}. WebAssembly environment is still loading or failed to load. Check logs above.`, 'error');
         return;
     }
 
@@ -172,6 +177,8 @@ function handleFile(file) {
 dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => { 
     if (e.target.files[0]) handleFile(e.target.files[0]); 
+    // Reset the input value so the same file can be selected again sequentially
+    e.target.value = ''; 
 });
 dropZone.addEventListener('dragover', e => { 
     e.preventDefault(); 
