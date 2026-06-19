@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Mobile Asset Extractor</title>
+    <title>APK Model Extractor</title>
     <link rel="stylesheet" href="css/style.css">
     <script type="importmap">
         {
@@ -16,63 +16,90 @@
 </head>
 <body>
     <div class="app-container">
+
+        <!-- TOP BAR -->
         <header class="top-bar">
             <div class="controls-row">
                 <label for="apk-upload" class="custom-file-upload">
                     📁 SELECT ARCHIVE
                 </label>
-                <input id="apk-upload" type="file" accept=".apk,.bundle,.assets" />
+                <input id="apk-upload" type="file" accept=".apk,.bundle,.assets,.zip" />
                 <div class="status-indicator">
-                    <span id="status-text">System Idle</span>
+                    <span id="status-text">System Idle. Select an APK or Unity bundle to begin.</span>
                     <progress id="progress-bar" value="0" max="100"></progress>
                 </div>
             </div>
         </header>
 
+        <!-- 3D VIEWPORT -->
         <main class="viewport-container" id="viewport-container">
             <canvas id="viewer-canvas"></canvas>
             <div id="overlay-ui">
                 <div id="model-stats" class="hidden">
                     <span id="stat-verts">V: 0</span> | <span id="stat-faces">F: 0</span>
+                    <span class="stat-hint">· double-tap to toggle wireframe</span>
                 </div>
             </div>
         </main>
 
+        <!-- BOTTOM PANEL -->
         <footer class="bottom-panel">
             <div class="tabs">
-                <button class="tab-btn active" onclick="switchTab('logs')">Live Scanner</button>
-                <button class="tab-btn" onclick="switchTab('assets')">Models (<span id="asset-count">0</span>)</button>
+                <button class="tab-btn active" data-tab="logs"   onclick="switchTab('logs')">
+                    LIVE SCANNER
+                </button>
+                <button class="tab-btn"         data-tab="models" onclick="switchTab('models')">
+                    MODELS (<span id="model-count">0</span>)
+                </button>
+                <button class="tab-btn"         data-tab="assets" onclick="switchTab('assets')">
+                    ALL ASSETS (<span id="asset-count">0</span>)
+                </button>
             </div>
-            
-            <div id="tab-logs" class="tab-content active">
+
+            <!-- LOGS TAB -->
+            <div id="tab-logs" class="tab-content">
                 <div id="terminal-log">
-                    <div class="log-entry system">UI Initialized. Awaiting file selection...</div>
+                    <div class="log-entry system">UI Initialized. Awaiting file selection…</div>
                 </div>
             </div>
 
+            <!-- MODELS TAB -->
+            <div id="tab-models" class="tab-content hidden">
+                <p id="no-models-msg" class="empty-msg">No archive loaded. Select an APK or bundle above.</p>
+                <ul id="model-list"></ul>
+            </div>
+
+            <!-- ALL ASSETS TAB -->
             <div id="tab-assets" class="tab-content hidden">
                 <ul id="asset-list"></ul>
             </div>
         </footer>
+
     </div>
 
     <script>
+        // Defined inline so it's available before module loads
         function switchTab(tabName) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-            document.getElementById('tab-' + tabName).classList.remove('hidden');
-            event.target.classList.add('active');
+            const tabEl = document.getElementById('tab-' + tabName);
+            const btnEl = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+            if (tabEl) tabEl.classList.remove('hidden');
+            if (btnEl) btnEl.classList.add('active');
         }
 
-        // Catch silent mobile browser errors and print them to our UI
         window.onerror = function(message, source, lineno, colno, error) {
             const term = document.getElementById('terminal-log');
             if (term) {
-                term.innerHTML += `<div class="log-entry error">CRITICAL ERROR: ${message} (Line ${lineno})</div>`;
+                const div = document.createElement('div');
+                div.className = 'log-entry error';
+                div.textContent = `CRITICAL: ${message} (line ${lineno})`;
+                term.appendChild(div);
                 term.parentElement.scrollTop = term.parentElement.scrollHeight;
             }
         };
     </script>
+
     <script type="module" src="js/main.js"></script>
 </body>
 </html>
