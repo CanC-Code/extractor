@@ -1,16 +1,37 @@
 // js/worker.js
 
 var Module = {
-    // Emscripten inside a worker thinks its base directory is the worker's directory (/js/).
-    // We must intercept the WASM request and strictly point it to the /build/ directory.
-    locateFile: function(path, prefix) {
-        if (path.endsWith('.wasm')) {
-            // This reliably calculates the absolute URL to your build folder.
-            // e.g., if worker is at https://canc-code.github.io/extractor/js/worker.js
-            // it forces the fetch to https://canc-code.github.io/extractor/build/parser.wasm
-            return new URL('../build/' + path, self.location.href).href;
-        }
-        return prefix + path;
+    // Override the default WASM fetching to guarantee the correct absolute path
+    // and provide human-readable errors if GitHub Pages returns a 404 HTML page.
+    instantiateWasm: function(info, receiveInstance) {
+        // Calculate the exact absolute URL based on the worker's location
+        const wasmUrl = new URL('../build/parser.wasm', self.location.href).href;
+        
+        self.postMessage({ type: 'LOG', logType: 'info', data: `[WASM] Attempting to fetch binary from: ${wasmUrl}` });
+
+        fetch(wasmUrl)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status} - File not found at ${wasmUrl}`);
+                }
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('text/html')) {
+                    throw new Error(`Server returned HTML instead of WebAssembly. The file is missing on the server at: ${wasmUrl}`);
+                }
+                return response.arrayBuffer();
+            })
+            .then(bytes => WebAssembly.instantiate(bytes, info))
+            .then(result => {
+                self.postMessage({ type: 'LOG', logType: 'success', data: '[WASM] Binary downloaded and compiled successfully.' });
+                receiveInstance(result.instance);
+            })
+            .catch(err => {
+                self.postMessage({ type: 'ERROR', command: 'init', error: err.message });
+                self.postMessage({ type: 'LOG', logType: 'error', data: `[WASM FATAL] ${err.message}` });
+            });
+
+        // Return empty object to instruct Emscripten to wait for the async receiveInstance call
+        return {}; 
     },
     onRuntimeInitialized: function() {
         self.postMessage({ type: 'READY' });
@@ -26,7 +47,7 @@ var Module = {
 self.Module = Module;
 
 try {
-    // Load the JS glue code
+    // Load the Emscripten JavaScript glue code
     importScripts('../build/parser.js'); 
 } catch (error) {
     self.postMessage({ 
@@ -65,7 +86,7 @@ self.onmessage = function(event) {
                         [dataPtr, size]          
                     );
 
-                    // Free memory to prevent memory leaks and crashing
+                    // Free memory to prevent leaks
                     Module._free(dataPtr);
                     self.postMessage({ type: 'SUCCESS', command: 'PROCESS_FILE' });
 
