@@ -5,53 +5,67 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Unity APK Extractor</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/loaders/OBJLoader.js"></script>
+  
   <style>
     body { font-family: system-ui, sans-serif; }
     .drop-zone { transition: all 0.3s; }
-    .drop-zone.dragover { background-color: #1e3a8a; border-color: #60a5fa; }
+    .drop-zone.dragover { background-color: #1e40af; border-color: #60a5fa; }
+    #viewport-container { background: #0a0a0c; border-radius: 12px; overflow: hidden; }
   </style>
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen">
-  <div class="max-w-6xl mx-auto p-6">
+  <div class="max-w-7xl mx-auto p-6">
     <h1 class="text-4xl font-bold text-center mb-2">Unity APK Extractor</h1>
-    <p class="text-center text-gray-400 mb-8">Extract meshes, textures & assets from Unity games locally in your browser</p>
+    <p class="text-center text-gray-400 mb-8">Drag & drop APK • Extract Meshes • View in 3D • Download Assets</p>
 
-    <div id="dropZone" class="drop-zone border-2 border-dashed border-gray-600 rounded-2xl p-12 text-center cursor-pointer hover:border-blue-500">
-      <div class="mb-4 text-6xl">📦</div>
-      <p class="text-xl font-medium mb-2">Drop APK or .unity3d file here</p>
-      <p class="text-gray-500">or</p>
-      <input type="file" id="fileInput" class="hidden" accept=".apk,.unity3d,.bin">
-      <button onclick="document.getElementById('fileInput').click()" 
-              class="mt-4 px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium">
+    <!-- Drop Zone -->
+    <div id="dropZone" class="drop-zone border-2 border-dashed border-gray-600 rounded-3xl p-12 text-center cursor-pointer mb-8">
+      <div class="mb-6 text-7xl">📦</div>
+      <p class="text-2xl font-medium mb-2">Drop APK or Unity file here</p>
+      <input type="file" id="apk-upload" class="hidden" accept=".apk,.unity3d,.bin,.dat">
+      <button onclick="document.getElementById('apk-upload').click()" 
+              class="mt-6 px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-xl font-semibold text-lg">
         Select File
       </button>
     </div>
 
-    <div id="status" class="mt-8 hidden">
-      <div class="flex justify-between text-sm mb-2">
-        <span id="filename" class="font-medium"></span>
-        <span id="progressText" class="text-blue-400">0%</span>
-      </div>
-      <div class="h-2 bg-gray-800 rounded-full overflow-hidden">
-        <div id="progressBar" class="h-full bg-blue-500 w-0 transition-all"></div>
-      </div>
-    </div>
-
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-      <!-- Logs -->
-      <div class="bg-gray-900 rounded-xl p-5 h-96 overflow-auto" id="logContainer">
-        <h3 class="font-semibold mb-3 text-green-400">Logs</h3>
-        <div id="logs" class="font-mono text-sm space-y-1 text-gray-300"></div>
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <!-- 3D Viewer -->
+      <div class="lg:col-span-7 bg-gray-900 rounded-2xl p-4">
+        <div id="viewport-container" class="aspect-video">
+          <canvas id="viewer-canvas"></canvas>
+        </div>
       </div>
 
-      <!-- Assets -->
-      <div class="bg-gray-900 rounded-xl p-5 h-96 overflow-auto">
-        <h3 class="font-semibold mb-3 text-amber-400">Found Assets</h3>
-        <div id="assets" class="space-y-2"></div>
+      <!-- Sidebar -->
+      <div class="lg:col-span-5 space-y-6">
+        <!-- Status -->
+        <div class="bg-gray-900 rounded-2xl p-5">
+          <div class="flex justify-between mb-3">
+            <span class="font-medium" id="status-text">Ready</span>
+            <span id="asset-count" class="text-amber-400 font-bold">0</span>
+          </div>
+          <progress id="progress-bar" class="w-full h-2" value="0" max="100"></progress>
+        </div>
+
+        <!-- Logs -->
+        <div class="bg-gray-900 rounded-2xl p-5 h-80 overflow-auto">
+          <h3 class="font-semibold mb-3 text-green-400">Terminal</h3>
+          <div id="terminal-log" class="font-mono text-sm space-y-1 text-gray-300"></div>
+        </div>
+
+        <!-- Assets List -->
+        <div class="bg-gray-900 rounded-2xl p-5 h-80 overflow-auto">
+          <h3 class="font-semibold mb-3 text-amber-400">Extracted Assets</h3>
+          <ul id="asset-list" class="space-y-2 text-sm"></ul>
+        </div>
       </div>
     </div>
   </div>
 
-  <script src="js/worker.js"></script>
+  <script src="js/main.js"></script>
 </body>
 </html>
