@@ -1,102 +1,57 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>APK Model Extractor</title>
-    <link rel="stylesheet" href="css/style.css">
-    <script type="importmap">
-        { "imports": {
-            "three":          "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three/addons/":  "https://unpkg.com/three@0.160.0/examples/jsm/"
-        }}
-    </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unity APK Extractor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; }
+    .drop-zone { transition: all 0.3s; }
+    .drop-zone.dragover { background-color: #1e3a8a; border-color: #60a5fa; }
+  </style>
 </head>
-<body>
-<div class="app-container">
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+  <div class="max-w-6xl mx-auto p-6">
+    <h1 class="text-4xl font-bold text-center mb-2">Unity APK Extractor</h1>
+    <p class="text-center text-gray-400 mb-8">Extract meshes, textures & assets from Unity games locally in your browser</p>
 
-    <!-- TOP BAR -->
-    <header class="top-bar">
-        <div class="controls-row">
-            <label for="apk-upload" class="btn-upload">📁 SELECT ARCHIVE</label>
-            <input id="apk-upload" type="file" accept=".apk,.bundle,.assets,.zip,.split0,.split1,.split2">
-            <div class="status-col">
-                <span id="status-text">Idle — select an APK or Unity bundle to begin.</span>
-                <progress id="progress-bar" value="0" max="100"></progress>
-            </div>
-        </div>
-    </header>
+    <div id="dropZone" class="drop-zone border-2 border-dashed border-gray-600 rounded-2xl p-12 text-center cursor-pointer hover:border-blue-500">
+      <div class="mb-4 text-6xl">📦</div>
+      <p class="text-xl font-medium mb-2">Drop APK or .unity3d file here</p>
+      <p class="text-gray-500">or</p>
+      <input type="file" id="fileInput" class="hidden" accept=".apk,.unity3d,.bin">
+      <button onclick="document.getElementById('fileInput').click()" 
+              class="mt-4 px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium">
+        Select File
+      </button>
+    </div>
 
-    <!-- 3D VIEWPORT -->
-    <main class="viewport" id="viewport-container">
-        <canvas id="viewer-canvas"></canvas>
-        <div id="overlay-ui">
-            <div id="model-stats" class="hidden">
-                <span id="stat-name" class="stat-name">—</span>
-                <span id="stat-verts">V: 0</span>
-                <span class="stat-sep">·</span>
-                <span id="stat-faces">F: 0</span>
-                <span class="stat-hint">dbl-tap = wireframe</span>
-            </div>
-        </div>
-    </main>
+    <div id="status" class="mt-8 hidden">
+      <div class="flex justify-between text-sm mb-2">
+        <span id="filename" class="font-medium"></span>
+        <span id="progressText" class="text-blue-400">0%</span>
+      </div>
+      <div class="h-2 bg-gray-800 rounded-full overflow-hidden">
+        <div id="progressBar" class="h-full bg-blue-500 w-0 transition-all"></div>
+      </div>
+    </div>
 
-    <!-- BOTTOM PANEL -->
-    <footer class="bottom-panel">
-        <div class="tabs">
-            <button class="tab-btn active" data-tab="logs"   onclick="switchTab('logs')">LIVE SCANNER</button>
-            <button class="tab-btn"        data-tab="models" onclick="switchTab('models')">
-                MODELS (<span id="model-count">0</span>)
-            </button>
-            <button class="tab-btn"        data-tab="assets" onclick="switchTab('assets')">
-                ALL (<span id="asset-count">0</span>)
-            </button>
-        </div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+      <!-- Logs -->
+      <div class="bg-gray-900 rounded-xl p-5 h-96 overflow-auto" id="logContainer">
+        <h3 class="font-semibold mb-3 text-green-400">Logs</h3>
+        <div id="logs" class="font-mono text-sm space-y-1 text-gray-300"></div>
+      </div>
 
-        <!-- LOGS -->
-        <div id="tab-logs" class="tab-content">
-            <div id="terminal-log">
-                <div class="log-entry system">UI ready. Select an APK or Unity bundle above.</div>
-            </div>
-        </div>
+      <!-- Assets -->
+      <div class="bg-gray-900 rounded-xl p-5 h-96 overflow-auto">
+        <h3 class="font-semibold mb-3 text-amber-400">Found Assets</h3>
+        <div id="assets" class="space-y-2"></div>
+      </div>
+    </div>
+  </div>
 
-        <!-- MODELS -->
-        <div id="tab-models" class="tab-content hidden">
-            <div class="models-toolbar">
-                <button id="save-all-btn" class="btn-save-all" onclick="saveAllModels()" style="display:none">
-                    ⬇ SAVE ALL AS ZIP
-                </button>
-            </div>
-            <p id="no-models-msg" class="empty-msg">No archive loaded.</p>
-            <ul id="model-list"></ul>
-        </div>
-
-        <!-- ALL ASSETS -->
-        <div id="tab-assets" class="tab-content hidden">
-            <ul id="asset-list"></ul>
-        </div>
-    </footer>
-</div>
-
-<script>
-    function switchTab(name) {
-        document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-        document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-        const tc = document.getElementById('tab-' + name);
-        const bt = document.querySelector(`.tab-btn[data-tab="${name}"]`);
-        if (tc) tc.classList.remove('hidden');
-        if (bt) bt.classList.add('active');
-    }
-    window.onerror = function(msg, src, line) {
-        const t = document.getElementById('terminal-log');
-        if (!t) return;
-        const d = document.createElement('div');
-        d.className = 'log-entry error';
-        d.textContent = `CRITICAL: ${msg} (line ${line})`;
-        t.appendChild(d);
-        t.parentElement.scrollTop = t.parentElement.scrollHeight;
-    };
-</script>
-<script type="module" src="js/main.js"></script>
+  <script src="js/worker.js"></script>
 </body>
 </html>
