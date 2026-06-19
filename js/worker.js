@@ -1,22 +1,21 @@
 // js/worker.js
 
 var Module = {
-    // Override the default WASM fetching to guarantee the correct absolute path
-    // and provide human-readable errors if GitHub Pages returns a 404 HTML page.
+    // Override the default WASM fetching to use a pure relative path
     instantiateWasm: function(info, receiveInstance) {
-        // Calculate the exact absolute URL based on the worker's location
-        const wasmUrl = new URL('../build/parser.wasm', self.location.href).href;
+        // Since this script runs in /js/, going up one level targets the build folder perfectly
+        const wasmPath = '../build/parser.wasm';
         
-        self.postMessage({ type: 'LOG', logType: 'info', data: `[WASM] Attempting to fetch binary from: ${wasmUrl}` });
+        self.postMessage({ type: 'LOG', logType: 'info', data: `[WASM] Attempting to fetch binary from relative path: ${wasmPath}` });
 
-        fetch(wasmUrl)
+        fetch(wasmPath)
             .then(response => {
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status} - File not found at ${wasmUrl}`);
+                    throw new Error(`HTTP ${response.status} - File not found at ${wasmPath}`);
                 }
                 const contentType = response.headers.get('content-type');
                 if (contentType && contentType.includes('text/html')) {
-                    throw new Error(`Server returned HTML instead of WebAssembly. The file is missing on the server at: ${wasmUrl}`);
+                    throw new Error(`Server returned HTML instead of WebAssembly. The file is missing on the server.`);
                 }
                 return response.arrayBuffer();
             })
@@ -30,7 +29,6 @@ var Module = {
                 self.postMessage({ type: 'LOG', logType: 'error', data: `[WASM FATAL] ${err.message}` });
             });
 
-        // Return empty object to instruct Emscripten to wait for the async receiveInstance call
         return {}; 
     },
     onRuntimeInitialized: function() {
@@ -47,13 +45,12 @@ var Module = {
 self.Module = Module;
 
 try {
-    // Load the Emscripten JavaScript glue code
     importScripts('../build/parser.js'); 
 } catch (error) {
     self.postMessage({ 
         type: 'ERROR', 
         command: 'init', 
-        error: `Fatal import error. Ensure 'parser.js' exists in the build directory. Details: ${error.message}` 
+        error: `Fatal import error. Details: ${error.message}` 
     });
 }
 
@@ -67,18 +64,15 @@ self.onmessage = function(event) {
                 const file = payload.file;
                 self.postMessage({ type: 'LOG', logType: 'info', data: `Worker loading ${file.name} into memory...` });
 
-                // Read the file asynchronously in the background worker
                 file.arrayBuffer().then(buffer => {
                     const uint8View = new Uint8Array(buffer);
                     const size = uint8View.length;
 
                     self.postMessage({ type: 'LOG', logType: 'info', data: `Allocating WASM heap for ${size} bytes...` });
 
-                    // Allocate memory in WASM and copy
                     const dataPtr = Module._malloc(size);
                     Module.HEAPU8.set(uint8View, dataPtr);
 
-                    // Call the C++ parser
                     Module.ccall(
                         'process_unity_archive', 
                         null,                    
@@ -86,7 +80,6 @@ self.onmessage = function(event) {
                         [dataPtr, size]          
                     );
 
-                    // Free memory to prevent leaks
                     Module._free(dataPtr);
                     self.postMessage({ type: 'SUCCESS', command: 'PROCESS_FILE' });
 
@@ -125,17 +118,9 @@ self.onmessage = function(event) {
             }
 
             default:
-                self.postMessage({ 
-                    type: 'ERROR', 
-                    command: command, 
-                    error: 'Unknown command execution requested.' 
-                });
+                self.postMessage({ type: 'ERROR', command: command, error: 'Unknown command execution requested.' });
         }
     } catch (error) {
-        self.postMessage({ 
-            type: 'ERROR', 
-            command: command, 
-            error: error.message || 'Unknown execution error within worker.' 
-        });
+        self.postMessage({ type: 'ERROR', command: command, error: error.message || 'Unknown execution error within worker.' });
     }
 };
