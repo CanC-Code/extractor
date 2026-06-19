@@ -3,18 +3,15 @@ importScripts('../build/parser.js');
 
 let wasmReady = false;
 
-if (typeof Module !== 'undefined') {
-    Module.onRuntimeInitialized = () => {
-        wasmReady = true;
-        console.log("✅ WASM Parser Ready");
-        postMessage({ type: 'LOG', data: 'WASM Engine initialized', logType: 'success' });
-    };
-}
+Module.onRuntimeInitialized = () => {
+    wasmReady = true;
+    postMessage({ type: 'LOG', data: '✅ WASM Parser Engine Ready', logType: 'success' });
+};
 
 self.onmessage = async function(e) {
     if (e.data.type === 'PROCESS_FILE') {
         const file = e.data.file;
-        const chunkSize = 10 * 1024 * 1024;
+        const chunkSize = 8 * 1024 * 1024;
         let offset = 0;
 
         postMessage({ 
@@ -38,7 +35,7 @@ self.onmessage = async function(e) {
                 const percent = Math.floor(((offset + chunkSize) / file.size) * 100);
                 postMessage({ type: 'PROGRESS', data: Math.min(100, percent) });
 
-                // === UNITYFS BUNDLE DETECTION ===
+                // === UnityFS Bundle Detection ===
                 for (let i = 0; i < u8.length - 7; i++) {
                     if (u8[i] === 85 && u8[i+1] === 110 && u8[i+2] === 105 && 
                         u8[i+3] === 116 && u8[i+4] === 121 && u8[i+5] === 70 && u8[i+6] === 83) {
@@ -49,19 +46,11 @@ self.onmessage = async function(e) {
                             data: `[BUNDLE] Found UnityFS at offset 0x${absOffset.toString(16).toUpperCase()}`,
                             logType: 'success' 
                         });
-
-                        // Try to send to WASM
-                        if (wasmReady) {
-                            try {
-                                const chunk = u8.slice(Math.max(0, i-64), Math.min(i + 512, u8.length));
-                                Module.ccall('process_unity_archive', 'void', ['array', 'number'], [chunk, chunk.length]);
-                            } catch (err) {}
-                        }
                     }
                 }
 
-                // === IMPROVED ASSET NAME EXTRACTION ===
-                extractAssets(u8, offset);
+                // === Improved Asset Name Extraction ===
+                extractAssetNames(u8, offset);
 
                 offset += chunkSize;
                 setTimeout(readNextChunk, 5);
@@ -74,8 +63,10 @@ self.onmessage = async function(e) {
     }
 };
 
-function extractAssets(u8, chunkOffset) {
+function extractAssetNames(u8, chunkOffset) {
     let str = "";
+    let found = 0;
+
     for (let i = 0; i < u8.length; i++) {
         const code = u8[i];
 
@@ -84,18 +75,27 @@ function extractAssets(u8, chunkOffset) {
         } else {
             if (str.length > 10) {
                 const lower = str.toLowerCase();
-                if (lower.includes('.mesh') || lower.includes('.tex') || 
-                    lower.includes('.png') || lower.includes('.mat') || 
-                    lower.includes('.asset') || lower.includes('.prefab') ||
-                    str.startsWith('CAB-') || str.includes('Assets/')) {
 
+                if (
+                    lower.includes('.mesh') || 
+                    lower.includes('.tex') || 
+                    lower.includes('.png') || 
+                    lower.includes('.jpg') || 
+                    lower.includes('.mat') || 
+                    lower.includes('.asset') || 
+                    lower.includes('.prefab') ||
+                    str.startsWith('CAB-') ||
+                    (str.includes('.') && str.length < 80)
+                ) {
                     postMessage({
                         type: 'ASSET_FOUND_META',
                         data: {
-                            name: str.trim().substring(0, 120),
+                            name: str.trim(),
                             offset: chunkOffset + i - str.length
                         }
                     });
+                    found++;
+                    if (found > 25) break; // prevent spam
                 }
             }
             str = "";
