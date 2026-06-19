@@ -17,15 +17,15 @@
 <body>
     <div class="app-container">
         <header class="top-bar">
-            <div class="file-input-wrapper">
+            <div class="controls-row">
                 <label for="apk-upload" class="custom-file-upload">
-                    📁 Load APK / Bundle
+                    📁 SELECT ARCHIVE
                 </label>
                 <input id="apk-upload" type="file" accept=".apk,.bundle,.assets" />
-            </div>
-            <div class="status-indicator">
-                <span id="status-text">Idle</span>
-                <progress id="progress-bar" value="0" max="100"></progress>
+                <div class="status-indicator">
+                    <span id="status-text">System Idle</span>
+                    <progress id="progress-bar" value="0" max="100"></progress>
+                </div>
             </div>
         </header>
 
@@ -40,13 +40,13 @@
 
         <footer class="bottom-panel">
             <div class="tabs">
-                <button class="tab-btn active" onclick="switchTab('logs')">Live Log</button>
-                <button class="tab-btn" onclick="switchTab('assets')">Assets (<span id="asset-count">0</span>)</button>
+                <button class="tab-btn active" onclick="switchTab('logs')">Live Scanner</button>
+                <button class="tab-btn" onclick="switchTab('assets')">Models (<span id="asset-count">0</span>)</button>
             </div>
             
             <div id="tab-logs" class="tab-content active">
                 <div id="terminal-log">
-                    <div class="log-entry system">System ready. Select a file to begin deep scan.</div>
+                    <div class="log-entry system">UI Initialized. Awaiting file selection...</div>
                 </div>
             </div>
 
@@ -55,15 +55,24 @@
             </div>
         </footer>
     </div>
-    <script type="module" src="js/main.js"></script>
+
     <script>
-        // Simple tab switcher for mobile space management
         function switchTab(tabName) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
             document.getElementById('tab-' + tabName).classList.remove('hidden');
             event.target.classList.add('active');
         }
+
+        // Catch silent mobile browser errors and print them to our UI
+        window.onerror = function(message, source, lineno, colno, error) {
+            const term = document.getElementById('terminal-log');
+            if (term) {
+                term.innerHTML += `<div class="log-entry error">CRITICAL ERROR: ${message} (Line ${lineno})</div>`;
+                term.parentElement.scrollTop = term.parentElement.scrollHeight;
+            }
+        };
     </script>
+    <script type="module" src="js/main.js"></script>
 </body>
 </html>
