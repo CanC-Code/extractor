@@ -1,25 +1,23 @@
-// worker.js
+// js/worker.js
 
 // 1. Define the Emscripten Module configuration BEFORE importing the glue code
 self.Module = {
     // Fired when the WebAssembly module has been downloaded and instantiated
     onRuntimeInitialized: function() {
-        console.log('[WASM Worker] Runtime initialized.');
         postMessage({ type: 'READY' });
     },
-    // Reroute C++ std::cout to the worker's console
+    // Reroute C++ std::cout back to the main thread UI logs
     print: function(text) {
-        console.log('[C++ stdout]', text);
+        postMessage({ type: 'LOG', logType: 'info', data: text });
     },
-    // Reroute C++ std::cerr to the worker's console
+    // Reroute C++ std::cerr back to the main thread UI logs
     printErr: function(text) {
-        console.error('[C++ stderr]', text);
+        postMessage({ type: 'LOG', logType: 'error', data: text });
     }
 };
 
-// 2. Import the Emscripten-generated JavaScript file
-// NOTE: Change 'asset_parser.js' to match your compiler output filename
-importScripts('asset_parser.js');
+// 2. Import the Emscripten-generated JavaScript file matching the build.sh output
+importScripts('parser.js');
 
 // 3. Listen for commands from the Main Thread
 self.onmessage = function(event) {
@@ -32,7 +30,7 @@ self.onmessage = function(event) {
             // Command: process_unity_archive
             // -------------------------------------------------------------
             case 'process_unity_archive': {
-                const fileData = payload.fileData; // Expected: Uint8Array
+                const fileData = payload.fileData; 
                 const size = fileData.length;
                 
                 // Allocate memory inside WASM heap
@@ -80,7 +78,7 @@ self.onmessage = function(event) {
             // Command: deinterleave_mesh
             // -------------------------------------------------------------
             case 'deinterleave_mesh': {
-                const meshData = payload.meshData; // Expected: Uint8Array
+                const meshData = payload.meshData; 
                 const numVertices = payload.numVertices;
                 
                 const bufferSize = meshData.length;
@@ -116,7 +114,6 @@ self.onmessage = function(event) {
             // Fallback Handling
             // -------------------------------------------------------------
             default:
-                console.warn(`[WASM Worker] Unknown command received: ${command}`);
                 postMessage({ 
                     type: 'ERROR', 
                     command: command, 
@@ -124,7 +121,6 @@ self.onmessage = function(event) {
                 });
         }
     } catch (error) {
-        console.error(`[WASM Worker] Error executing ${command}:`, error);
         postMessage({ 
             type: 'ERROR', 
             command: command, 
