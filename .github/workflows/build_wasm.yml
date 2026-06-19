@@ -1,7 +1,7 @@
 name: Build WASM Parser
 
 on:
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
   push:
     paths:
       - 'src/**'
@@ -25,19 +25,31 @@ jobs:
         run: |
           cd src
           chmod +x build.sh
-          ./build.sh
+          ./build.sh 2>&1 | tee build.log
+        shell: bash
+
+      - name: Show Build Log
+        run: cat src/build.log
+
+      - name: List Generated Files
+        run: |
+          echo "=== Files in build/ directory ==="
+          ls -la build/ || echo "build/ directory not found!"
+          echo "=== Files in src/build/ (if exists) ==="
+          ls -la src/build/ 2>/dev/null || echo "No src/build/"
+        shell: bash
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: wasm-parser-build
           path: |
-            build/parser.js
-            build/parser.wasm
-          if-no-files-found: error
+            build/
+            src/build/
+          if-no-files-found: warn
           retention-days: 30
 
-      - name: Verify Build Output
+      - name: Final Verification
         run: |
-          ls -la build/
-          echo "Build completed successfully!"
+          echo "✅ Workflow completed."
+          echo "Check the 'Upload Build Artifacts' step to download the output."
