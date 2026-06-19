@@ -21,7 +21,7 @@ function initThree() {
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(75, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
     renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
-    
+
     renderer.setSize(canvas.clientWidth, canvas.clientHeight);
     camera.position.z = 5;
 
@@ -39,20 +39,23 @@ function initThree() {
 
 /**
  * Preview Model in Viewport
- * Placeholder for loading logic
+ * Placeholder for loading logic until specific mesh binary extraction is implemented
  */
 function previewModel(name) {
     log(`Loading model: ${name}...`, 'info');
+    
     // Clear existing models
     scene.children.filter(c => c.type === 'Mesh').forEach(m => scene.remove(m));
-    
-    // Add dummy cube as placeholder for the model logic
+
+    // Placeholder: In a complete implementation, this would trigger 
+    // worker.postMessage({ command: 'deinterleave_mesh', ... })
+    // and parse the resulting OBJ string.
     const geometry = new THREE.BoxGeometry(1, 1, 1);
     const material = new THREE.MeshPhongMaterial({ color: 0x4f46e5 });
     const cube = new THREE.Mesh(geometry, material);
     scene.add(cube);
-    
-    log(`Model ${name} displayed in viewport`, 'success');
+
+    log(`Model ${name} placeholder displayed in viewport`, 'success');
 }
 
 /**
@@ -67,17 +70,41 @@ function log(msg, type = 'info') {
 }
 
 /**
- * Initializes the Web Worker.
+ * Initializes the Web Worker and sets up the strict command-response protocol.
  */
 function initWorker() {
     try {
         worker = new Worker('js/worker.js');
         worker.onmessage = (e) => {
-            const { type, data } = e.data;
-            if (type === 'LOG') log(data, e.data.logType);
-            else if (type === 'ASSET_FOUND_META') handleAssetDiscovery(data);
+            const response = e.data;
+            
+            // Handle standard lifecycle & command responses from worker.js
+            if (response.type === 'READY') {
+                log("WASM Runtime initialized and worker ready.", "success");
+            } 
+            else if (response.type === 'SUCCESS') {
+                if (response.command === 'process_unity_archive') {
+                    log("Archive processing complete.", "success");
+                } else if (response.command === 'deinterleave_mesh') {
+                    log("Mesh deinterleaved successfully.", "success");
+                    // Assuming Three.js OBJLoader or manual parsing here later
+                    console.log("OBJ Data:", response.result);
+                }
+            } 
+            else if (response.type === 'ERROR') {
+                log(`Worker execution error: ${response.error}`, "error");
+            }
+            // Preserve legacy/custom UI hooks
+            else if (response.type === 'LOG') {
+                log(response.data, response.logType);
+            } 
+            else if (response.type === 'ASSET_FOUND_META') {
+                handleAssetDiscovery(response.data);
+            }
         };
-    } catch (err) { log(`Worker error: ${err.message}`, 'error'); }
+    } catch (err) { 
+        log(`Worker initialization error: ${err.message}`, 'error'); 
+    }
 }
 
 /**
@@ -90,7 +117,7 @@ function handleAssetDiscovery(data) {
     const isModel = data.name.match(/\.(mesh|fbx|obj|prefab)$/i);
     const item = document.createElement('li');
     item.className = "p-2 border-b border-zinc-800 text-xs flex justify-between items-center hover:bg-zinc-800";
-    
+
     item.innerHTML = `
         <span class="text-amber-300 truncate">${data.name}</span>
         <button class="px-2 py-1 ${isModel ? 'bg-amber-600' : 'bg-zinc-700'} hover:opacity-80 rounded text-[10px]">
@@ -108,21 +135,49 @@ function handleAssetDiscovery(data) {
 }
 
 /**
- * File Handling
+ * File Handling: Reads the file into an ArrayBuffer and passes it to the WASM worker
  */
 function handleFile(file) {
     logs.innerHTML = '';
     modelList.innerHTML = '';
     assetList.innerHTML = '';
     seen.clear();
-    log(`Processing: ${file.name}`, 'success');
-    worker.postMessage({ type: 'PROCESS_FILE', file: file });
+    
+    log(`Reading file: ${file.name} (${file.size} bytes)`, 'info');
+    
+    const reader = new FileReader();
+    
+    reader.onload = function(e) {
+        log(`File read to memory. Sending to WASM worker...`, 'info');
+        const arrayBuffer = e.target.result;
+        const uint8View = new Uint8Array(arrayBuffer);
+        
+        // Use the strict command protocol established in worker.js
+        worker.postMessage({ 
+            command: 'process_unity_archive', 
+            payload: {
+                fileData: uint8View
+            }
+        });
+    };
+    
+    reader.onerror = function() {
+        log(`Failed to read file: ${file.name}`, 'error');
+    };
+
+    // Read as ArrayBuffer for binary C++ processing
+    reader.readAsArrayBuffer(file);
 }
 
 // Event Listeners
 dropZone.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); });
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+fileInput.addEventListener('change', (e) => { 
+    if (e.target.files[0]) handleFile(e.target.files[0]); 
+});
+dropZone.addEventListener('dragover', e => { 
+    e.preventDefault(); 
+    dropZone.classList.add('dragover'); 
+});
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
 dropZone.addEventListener('drop', e => {
     e.preventDefault();
@@ -133,4 +188,4 @@ dropZone.addEventListener('drop', e => {
 // Init
 initThree();
 initWorker();
-log("✅ Ready. Drop an APK to begin.", "success");
+log("✅ Ready. Drop an APK or Unity bundle to begin.", "success");
