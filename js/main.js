@@ -12,6 +12,7 @@ const canvas = document.getElementById('renderCanvas');
 let scene, camera, renderer;
 
 let worker = null;
+let isWorkerReady = false;
 const seen = new Set();
 
 /**
@@ -39,7 +40,6 @@ function initThree() {
 
 /**
  * Preview Model in Viewport
- * Placeholder for loading logic until specific mesh binary extraction is implemented
  */
 function previewModel(name) {
     log(`Loading model: ${name}...`, 'info');
@@ -47,9 +47,6 @@ function previewModel(name) {
     // Clear existing models
     scene.children.filter(c => c.type === 'Mesh').forEach(m => scene.remove(m));
 
-    // Placeholder: In a complete implementation, this would trigger 
-    // worker.postMessage({ command: 'deinterleave_mesh', ... })
-    // and parse the resulting OBJ string.
     const geometry = new THREE.BoxGeometry(1, 1, 1);
     const material = new THREE.MeshPhongMaterial({ color: 0x4f46e5 });
     const cube = new THREE.Mesh(geometry, material);
@@ -80,6 +77,7 @@ function initWorker() {
             
             // Handle standard lifecycle & command responses from worker.js
             if (response.type === 'READY') {
+                isWorkerReady = true;
                 log("WASM Runtime initialized and worker ready.", "success");
             } 
             else if (response.type === 'SUCCESS') {
@@ -87,14 +85,12 @@ function initWorker() {
                     log("Archive processing complete.", "success");
                 } else if (response.command === 'deinterleave_mesh') {
                     log("Mesh deinterleaved successfully.", "success");
-                    // Assuming Three.js OBJLoader or manual parsing here later
                     console.log("OBJ Data:", response.result);
                 }
             } 
             else if (response.type === 'ERROR') {
                 log(`Worker execution error: ${response.error}`, "error");
             }
-            // Preserve legacy/custom UI hooks
             else if (response.type === 'LOG') {
                 log(response.data, response.logType);
             } 
@@ -138,6 +134,11 @@ function handleAssetDiscovery(data) {
  * File Handling: Reads the file into an ArrayBuffer and passes it to the WASM worker
  */
 function handleFile(file) {
+    if (!isWorkerReady) {
+        log(`Cannot process ${file.name}. WebAssembly environment is still loading.`, 'error');
+        return;
+    }
+
     logs.innerHTML = '';
     modelList.innerHTML = '';
     assetList.innerHTML = '';
@@ -152,7 +153,6 @@ function handleFile(file) {
         const arrayBuffer = e.target.result;
         const uint8View = new Uint8Array(arrayBuffer);
         
-        // Use the strict command protocol established in worker.js
         worker.postMessage({ 
             command: 'process_unity_archive', 
             payload: {
@@ -165,7 +165,6 @@ function handleFile(file) {
         log(`Failed to read file: ${file.name}`, 'error');
     };
 
-    // Read as ArrayBuffer for binary C++ processing
     reader.readAsArrayBuffer(file);
 }
 
