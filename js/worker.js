@@ -1,6 +1,5 @@
 // js/worker.js
 
-// 1. Define the Emscripten Module configuration safely using var
 var Module = {
     onRuntimeInitialized: function() {
         self.postMessage({ type: 'READY' });
@@ -13,15 +12,10 @@ var Module = {
     }
 };
 
-// Ensure self.Module is also set for standard Web Worker context hooks
 self.Module = Module;
 
-// 2. Import the Emscripten-generated JavaScript file safely
 try {
-    // Corrected path: Go up from /js/ and into /build/
     importScripts('../build/parser.js'); 
-    
-    // Fallback hook: If SINGLE_FILE initialized synchronously and bypassed the async hook
     if (Module.calledRun) {
         self.postMessage({ type: 'READY' });
     }
@@ -33,53 +27,56 @@ try {
     });
 }
 
-// 3. Listen for commands from the Main Thread
 self.onmessage = function(event) {
     const { command, payload } = event.data;
 
     try {
         switch (command) {
-            case 'process_unity_archive': {
-                const fileData = payload.fileData; 
-                const size = fileData.length;
-                
-                const dataPtr = Module._malloc(size);
-                Module.HEAPU8.set(fileData, dataPtr);
+            
+            // -------------------------------------------------------------
+            // Restored Logic: PROCESS_FILE
+            // -------------------------------------------------------------
+            case 'PROCESS_FILE': {
+                const file = payload.file;
+                self.postMessage({ type: 'LOG', logType: 'info', data: `Worker loading ${file.name} into memory...` });
 
-                Module.ccall(
-                    'process_unity_archive', 
-                    null,                    
-                    ['number', 'number'],    
-                    [dataPtr, size]          
-                );
+                // Read the file asynchronously in the background worker
+                file.arrayBuffer().then(buffer => {
+                    const uint8View = new Uint8Array(buffer);
+                    const size = uint8View.length;
 
-                Module._free(dataPtr);
-                self.postMessage({ type: 'SUCCESS', command: command });
+                    self.postMessage({ type: 'LOG', logType: 'info', data: `Allocating WASM heap for ${size} bytes...` });
+
+                    // Allocate memory in WASM and copy
+                    const dataPtr = Module._malloc(size);
+                    Module.HEAPU8.set(uint8View, dataPtr);
+
+                    // Call the C++ parser
+                    Module.ccall(
+                        'process_unity_archive', 
+                        null,                    
+                        ['number', 'number'],    
+                        [dataPtr, size]          
+                    );
+
+                    // Free memory to prevent crash
+                    Module._free(dataPtr);
+                    self.postMessage({ type: 'SUCCESS', command: 'PROCESS_FILE' });
+
+                }).catch(error => {
+                    self.postMessage({ type: 'ERROR', command: 'PROCESS_FILE', error: `Failed to read file buffer: ${error.message}` });
+                });
                 break;
             }
 
-            case 'process_unity_archive_offset': {
-                const bundleOffset = payload.bundleOffset;
-                const dataStart = payload.dataStart;
-                const blocksInfo = payload.blocksInfo;
-
-                Module.ccall(
-                    'process_unity_archive_offset',
-                    null,
-                    ['number', 'number', 'number'], 
-                    [bundleOffset, dataStart, blocksInfo] 
-                );
-
-                self.postMessage({ type: 'SUCCESS', command: command });
-                break;
-            }
-
+            // -------------------------------------------------------------
+            // Mesh Extraction
+            // -------------------------------------------------------------
             case 'deinterleave_mesh': {
                 const meshData = payload.meshData; 
                 const numVertices = payload.numVertices;
                 
                 const bufferSize = meshData.length;
-                
                 const bufferPtr = Module._malloc(bufferSize);
                 Module.HEAPU8.set(meshData, bufferPtr);
 
