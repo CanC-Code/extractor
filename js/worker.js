@@ -18,9 +18,8 @@ self.Module = Module;
 
 // 2. Import the Emscripten-generated JavaScript file safely
 try {
-    // NOTE: If your parser.js is located in the root build directory instead of js/, 
-    // you must change this path to: importScripts('../build/parser.js');
-    importScripts('parser.js'); 
+    // Corrected path: Go up from /js/ and into /build/
+    importScripts('../build/parser.js'); 
     
     // Fallback hook: If SINGLE_FILE initialized synchronously and bypassed the async hook
     if (Module.calledRun) {
@@ -30,7 +29,7 @@ try {
     self.postMessage({ 
         type: 'ERROR', 
         command: 'init', 
-        error: `Fatal import error. Ensure 'parser.js' is in the same directory as worker.js. Details: ${error.message}` 
+        error: `Fatal import error. Ensure 'parser.js' exists in the build directory. Details: ${error.message}` 
     });
 }
 
