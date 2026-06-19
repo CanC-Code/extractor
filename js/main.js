@@ -11,6 +11,11 @@ let worker = null;
 let assetCount = 0;
 const seen = new Set();
 
+/**
+ * Appends a log entry to the UI.
+ * @param {string} msg 
+ * @param {string} type 
+ */
 function log(msg, type = 'info') {
     const entry = document.createElement('div');
     entry.className = type === 'success' ? 'text-emerald-400' : type === 'error' ? 'text-red-400' : '';
@@ -19,7 +24,9 @@ function log(msg, type = 'info') {
     logs.scrollTop = logs.scrollHeight;
 }
 
-// Initialize Worker
+/**
+ * Initializes the Web Worker and sets up the message handler.
+ */
 function initWorker() {
     try {
         worker = new Worker('js/worker.js');
@@ -31,16 +38,29 @@ function initWorker() {
             if (type === 'LOG') {
                 log(data, logType);
             } else if (type === 'PROGRESS') {
-                // Progress bar can be added later
+                // Future implementation: update progress bar element
             } else if (type === 'ASSET_FOUND_META') {
-                if (seen.has(data.name)) return;
-                seen.add(data.name);
+                const name = data.name;
+                
+                // Prevent duplicate entries
+                if (seen.has(name)) return;
+                seen.add(name);
+                
                 assetCount++;
                 countEl.textContent = assetCount;
 
+                // Create list item with extraction capability
                 const item = document.createElement('li');
-                item.className = "bg-zinc-800 p-3 rounded-xl text-sm";
-                item.innerHTML = `<span class="text-amber-300">${data.name}</span><br><span class="text-xs text-zinc-500">0x${data.offset?.toString(16) || 'N/A'}</span>`;
+                item.className = "bg-zinc-800 p-3 rounded-xl text-sm flex justify-between items-center";
+                item.innerHTML = ` 
+                    <div> 
+                        <span class="text-amber-300">${name}</span><br>
+                        <span class="text-xs text-zinc-500">0x${data.offset?.toString(16) || 'N/A'}</span>
+                    </div> 
+                    <button onclick="alert('Extraction coming soon: ${name}')" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs"> 
+                        Extract 
+                    </button> 
+                `;
                 assetList.appendChild(item);
             }
         };
@@ -51,10 +71,14 @@ function initWorker() {
     }
 }
 
-// File Processing
+/**
+ * Handles the file input/drop process.
+ * @param {File} file 
+ */
 function handleFile(file) {
     if (!file) return;
 
+    // Reset state
     logs.innerHTML = '';
     assetList.innerHTML = '';
     seen.clear();
@@ -76,13 +100,19 @@ fileInput.addEventListener('change', (e) => {
     if (e.target.files[0]) handleFile(e.target.files[0]);
 });
 
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragover', e => { 
+    e.preventDefault(); 
+    dropZone.classList.add('dragover'); 
+});
+
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+
 dropZone.addEventListener('drop', e => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
     if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
 });
 
+// Start initialization
 initWorker();
 log("✅ Ready. Drop an APK to begin.", "success");
