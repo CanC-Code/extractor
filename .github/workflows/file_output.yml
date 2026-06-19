@@ -1,0 +1,41 @@
+name: Export Codebase Context
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  gather-context:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Compile Codebase into Singular Text File
+      run: |
+        OUTPUT_FILE="codebase_review.txt"
+        echo "Codebase Review Export" > $OUTPUT_FILE
+        echo "================================================================" >> $OUTPUT_FILE
+
+        # Extract strictly tracked files using git ls-files, avoiding build caches and binaries natively
+        git ls-files | while read -r file; do
+            # Secondary check for tracked binaries/images
+            if [[ "$file" == *.png || "$file" == *.jpg || "$file" == *.jpeg || "$file" == *.gif || "$file" == *.webp || "$file" == *.apk || "$file" == *.aar || "$file" == *.jar || "$file" == *.keystore || "$file" == *.jks || "$file" == *.class || "$file" == *.ico || "$file" == "$OUTPUT_FILE" ]]; then
+                continue
+            fi
+            
+            if [ -f "$file" ]; then
+                echo -e "\n\n================================================================" >> $OUTPUT_FILE
+                echo "FILE: ./$file" >> $OUTPUT_FILE
+                echo "================================================================" >> $OUTPUT_FILE
+                cat "$file" >> $OUTPUT_FILE || echo "[Unreadable file skipped]" >> $OUTPUT_FILE
+            fi
+        done
+
+    - name: Upload Codebase Context Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: codebase-review-context
+        path: codebase_review.txt
