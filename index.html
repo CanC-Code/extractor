@@ -6,100 +6,97 @@
     <title>APK Model Extractor</title>
     <link rel="stylesheet" href="css/style.css">
     <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
-        }
+        { "imports": {
+            "three":          "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/":  "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }}
     </script>
 </head>
 <body>
-    <div class="app-container">
+<div class="app-container">
 
-        <!-- TOP BAR -->
-        <header class="top-bar">
-            <div class="controls-row">
-                <label for="apk-upload" class="custom-file-upload">
-                    📁 SELECT ARCHIVE
-                </label>
-                <input id="apk-upload" type="file" accept=".apk,.bundle,.assets,.zip" />
-                <div class="status-indicator">
-                    <span id="status-text">System Idle. Select an APK or Unity bundle to begin.</span>
-                    <progress id="progress-bar" value="0" max="100"></progress>
-                </div>
+    <!-- TOP BAR -->
+    <header class="top-bar">
+        <div class="controls-row">
+            <label for="apk-upload" class="btn-upload">📁 SELECT ARCHIVE</label>
+            <input id="apk-upload" type="file" accept=".apk,.bundle,.assets,.zip,.split0,.split1,.split2">
+            <div class="status-col">
+                <span id="status-text">Idle — select an APK or Unity bundle to begin.</span>
+                <progress id="progress-bar" value="0" max="100"></progress>
             </div>
-        </header>
+        </div>
+    </header>
 
-        <!-- 3D VIEWPORT -->
-        <main class="viewport-container" id="viewport-container">
-            <canvas id="viewer-canvas"></canvas>
-            <div id="overlay-ui">
-                <div id="model-stats" class="hidden">
-                    <span id="stat-verts">V: 0</span> | <span id="stat-faces">F: 0</span>
-                    <span class="stat-hint">· double-tap to toggle wireframe</span>
-                </div>
+    <!-- 3D VIEWPORT -->
+    <main class="viewport" id="viewport-container">
+        <canvas id="viewer-canvas"></canvas>
+        <div id="overlay-ui">
+            <div id="model-stats" class="hidden">
+                <span id="stat-name" class="stat-name">—</span>
+                <span id="stat-verts">V: 0</span>
+                <span class="stat-sep">·</span>
+                <span id="stat-faces">F: 0</span>
+                <span class="stat-hint">dbl-tap = wireframe</span>
             </div>
-        </main>
+        </div>
+    </main>
 
-        <!-- BOTTOM PANEL -->
-        <footer class="bottom-panel">
-            <div class="tabs">
-                <button class="tab-btn active" data-tab="logs"   onclick="switchTab('logs')">
-                    LIVE SCANNER
+    <!-- BOTTOM PANEL -->
+    <footer class="bottom-panel">
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="logs"   onclick="switchTab('logs')">LIVE SCANNER</button>
+            <button class="tab-btn"        data-tab="models" onclick="switchTab('models')">
+                MODELS (<span id="model-count">0</span>)
+            </button>
+            <button class="tab-btn"        data-tab="assets" onclick="switchTab('assets')">
+                ALL (<span id="asset-count">0</span>)
+            </button>
+        </div>
+
+        <!-- LOGS -->
+        <div id="tab-logs" class="tab-content">
+            <div id="terminal-log">
+                <div class="log-entry system">UI ready. Select an APK or Unity bundle above.</div>
+            </div>
+        </div>
+
+        <!-- MODELS -->
+        <div id="tab-models" class="tab-content hidden">
+            <div class="models-toolbar">
+                <button id="save-all-btn" class="btn-save-all" onclick="saveAllModels()" style="display:none">
+                    ⬇ SAVE ALL AS ZIP
                 </button>
-                <button class="tab-btn"         data-tab="models" onclick="switchTab('models')">
-                    MODELS (<span id="model-count">0</span>)
-                </button>
-                <button class="tab-btn"         data-tab="assets" onclick="switchTab('assets')">
-                    ALL ASSETS (<span id="asset-count">0</span>)
-                </button>
             </div>
+            <p id="no-models-msg" class="empty-msg">No archive loaded.</p>
+            <ul id="model-list"></ul>
+        </div>
 
-            <!-- LOGS TAB -->
-            <div id="tab-logs" class="tab-content">
-                <div id="terminal-log">
-                    <div class="log-entry system">UI Initialized. Awaiting file selection…</div>
-                </div>
-            </div>
+        <!-- ALL ASSETS -->
+        <div id="tab-assets" class="tab-content hidden">
+            <ul id="asset-list"></ul>
+        </div>
+    </footer>
+</div>
 
-            <!-- MODELS TAB -->
-            <div id="tab-models" class="tab-content hidden">
-                <p id="no-models-msg" class="empty-msg">No archive loaded. Select an APK or bundle above.</p>
-                <ul id="model-list"></ul>
-            </div>
-
-            <!-- ALL ASSETS TAB -->
-            <div id="tab-assets" class="tab-content hidden">
-                <ul id="asset-list"></ul>
-            </div>
-        </footer>
-
-    </div>
-
-    <script>
-        // Defined inline so it's available before module loads
-        function switchTab(tabName) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-            const tabEl = document.getElementById('tab-' + tabName);
-            const btnEl = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
-            if (tabEl) tabEl.classList.remove('hidden');
-            if (btnEl) btnEl.classList.add('active');
-        }
-
-        window.onerror = function(message, source, lineno, colno, error) {
-            const term = document.getElementById('terminal-log');
-            if (term) {
-                const div = document.createElement('div');
-                div.className = 'log-entry error';
-                div.textContent = `CRITICAL: ${message} (line ${lineno})`;
-                term.appendChild(div);
-                term.parentElement.scrollTop = term.parentElement.scrollHeight;
-            }
-        };
-    </script>
-
-    <script type="module" src="js/main.js"></script>
+<script>
+    function switchTab(name) {
+        document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+        document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+        const tc = document.getElementById('tab-' + name);
+        const bt = document.querySelector(`.tab-btn[data-tab="${name}"]`);
+        if (tc) tc.classList.remove('hidden');
+        if (bt) bt.classList.add('active');
+    }
+    window.onerror = function(msg, src, line) {
+        const t = document.getElementById('terminal-log');
+        if (!t) return;
+        const d = document.createElement('div');
+        d.className = 'log-entry error';
+        d.textContent = `CRITICAL: ${msg} (line ${line})`;
+        t.appendChild(d);
+        t.parentElement.scrollTop = t.parentElement.scrollHeight;
+    };
+</script>
+<script type="module" src="js/main.js"></script>
 </body>
 </html>
