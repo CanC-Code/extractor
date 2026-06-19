@@ -6,7 +6,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 const container = document.getElementById('viewport-container');
 const canvas = document.getElementById('viewer-canvas');
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x111111);
+scene.background = new THREE.Color(0x0a0a0c);
 
 const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
 camera.position.set(0, 5, 10);
@@ -18,14 +18,13 @@ renderer.setPixelRatio(window.devicePixelRatio);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
 dirLight.position.set(10, 15, 10);
 scene.add(dirLight);
-scene.add(new THREE.GridHelper(20, 20, 0x444444, 0x222222));
+scene.add(new THREE.GridHelper(20, 20, 0x333333, 0x222222));
 
 let currentModel = null;
-
 function animate() {
     requestAnimationFrame(animate);
     controls.update();
@@ -41,21 +40,26 @@ window.addEventListener('resize', () => {
 
 // --- UI Binding ---
 const objLoader = new OBJLoader();
-const statsPanel = document.getElementById('model-stats');
 const terminal = document.getElementById('terminal-log');
 const logContainer = document.getElementById('tab-logs');
+const statusText = document.getElementById('status-text');
 
 function addLog(msg, type = 'normal') {
     const div = document.createElement('div');
     div.className = `log-entry ${type}`;
-    div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    
+    // Format timestamp
+    const now = new Date();
+    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
+    
+    div.innerText = `[${timeStr}] ${msg}`;
     terminal.appendChild(div);
-    logContainer.scrollTop = logContainer.scrollHeight; // Auto-scroll
+    logContainer.scrollTop = logContainer.scrollHeight;
 }
 
 function loadModelToViewport(objBlobUrl, verts, faces) {
     if (currentModel) scene.remove(currentModel);
-    addLog(`Loading model to viewport...`, 'system');
+    addLog(`Injecting geometry into WebGL context...`, 'system');
 
     objLoader.load(objBlobUrl, (object) => {
         currentModel = object;
@@ -64,15 +68,22 @@ function loadModelToViewport(objBlobUrl, verts, faces) {
         object.position.sub(center);
         scene.add(object);
 
-        statsPanel.classList.remove('hidden');
+        document.getElementById('model-stats').classList.remove('hidden');
         document.getElementById('stat-verts').innerText = `V: ${verts}`;
         document.getElementById('stat-faces').innerText = `F: ${faces}`;
-        addLog(`Model rendered successfully.`, 'success');
+        addLog(`Geometry Rendered.`, 'success');
     });
 }
 
 // --- Worker Setup ---
-const worker = new Worker('js/worker.js');
+let worker;
+try {
+    worker = new Worker('js/worker.js');
+    addLog('Background parsing thread spawned.', 'system');
+} catch (e) {
+    addLog(`Failed to spawn worker: ${e.message}`, 'error');
+}
+
 let assetCount = 0;
 
 worker.onmessage = function(e) {
@@ -80,7 +91,7 @@ worker.onmessage = function(e) {
     
     if (type === 'LOG') {
         addLog(data, logType || 'normal');
-        document.getElementById('status-text').innerText = data;
+        statusText.innerText = data;
     } else if (type === 'PROGRESS') {
         document.getElementById('progress-bar').value = data;
     } else if (type === 'ASSET_FOUND') {
@@ -93,7 +104,7 @@ worker.onmessage = function(e) {
                 <span class="asset-name">${data.name}</span>
                 <span class="asset-meta">V: ${data.verts} | F: ${data.faces}</span>
             </div>
-            <button class="btn-view" data-url="${data.blobUrl}" data-v="${data.verts}" data-f="${data.faces}">View</button>
+            <button class="btn-view" data-url="${data.blobUrl}" data-v="${data.verts}" data-f="${data.faces}">VIEW</button>
         `;
         li.querySelector('.btn-view').addEventListener('click', (ev) => {
             loadModelToViewport(ev.target.getAttribute('data-url'), ev.target.getAttribute('data-v'), ev.target.getAttribute('data-f'));
@@ -102,18 +113,32 @@ worker.onmessage = function(e) {
     }
 };
 
-// --- File Handling ---
-document.getElementById('apk-upload').addEventListener('change', (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
+worker.onerror = function(error) {
+    addLog(`Worker Error: ${error.message}`, 'error');
+};
 
-    terminal.innerHTML = ''; // Clear logs
+// --- File Handling ---
+const fileInput = document.getElementById('apk-upload');
+fileInput.addEventListener('change', (event) => {
+    const file = event.target.files[0];
+    if (!file) {
+        addLog("File selection cancelled or failed.", "error");
+        return;
+    }
+
+    // INSTANT FEEDBACK
+    terminal.innerHTML = '';
     document.getElementById('asset-list').innerHTML = '';
     assetCount = 0;
     document.getElementById('asset-count').innerText = "0";
     
-    addLog(`File selected: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`, 'system');
+    addLog(`MOUNTED: ${file.name}`, 'success');
+    addLog(`SIZE: ${(file.size / 1024 / 1024).toFixed(2)} MB`, 'system');
+    statusText.innerText = "Initiating Stream...";
     
-    // Pass the File object directly, DO NOT use arrayBuffer() here!
+    // Pass to worker
     worker.postMessage({ type: 'PROCESS_FILE', file: file });
+
+    // Reset input so selecting the same file again still triggers the event
+    event.target.value = ''; 
 });
