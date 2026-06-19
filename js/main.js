@@ -44,7 +44,6 @@ function initThree() {
 function previewModel(name) {
     log(`Loading model: ${name}...`, 'info');
     
-    // Clear existing models
     scene.children.filter(c => c.type === 'Mesh').forEach(m => scene.remove(m));
 
     const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -73,9 +72,8 @@ function initWorker() {
     try {
         worker = new Worker('js/worker.js');
         
-        // Catch critical network errors (like 404 for worker.js itself)
         worker.onerror = (err) => {
-            log(`Critical Worker Error: ${err.message || 'Failed to load worker script (check console)'}`, 'error');
+            log(`Critical Worker Error: ${err.message || 'Failed to load worker script'}`, 'error');
         };
 
         worker.onmessage = (e) => {
@@ -86,11 +84,10 @@ function initWorker() {
                 log("WASM Runtime initialized and worker ready.", "success");
             } 
             else if (response.type === 'SUCCESS') {
-                if (response.command === 'process_unity_archive') {
-                    log("Archive processing complete.", "success");
+                if (response.command === 'PROCESS_FILE') {
+                    log("File processed by background worker.", "success");
                 } else if (response.command === 'deinterleave_mesh') {
                     log("Mesh deinterleaved successfully.", "success");
-                    console.log("OBJ Data:", response.result);
                 }
             } 
             else if (response.type === 'ERROR') {
@@ -136,11 +133,12 @@ function handleAssetDiscovery(data) {
 }
 
 /**
- * File Handling: Reads the file into an ArrayBuffer and passes it to the WASM worker
+ * File Handling: Restored to securely pass the File object directly.
+ * This prevents the UI from freezing on large APKs/Bundles.
  */
 function handleFile(file) {
     if (!isWorkerReady) {
-        log(`Cannot process ${file.name}. WebAssembly environment is still loading or failed to load. Check logs above.`, 'error');
+        log(`Cannot process ${file.name}. WebAssembly environment is still loading.`, 'error');
         return;
     }
 
@@ -149,35 +147,19 @@ function handleFile(file) {
     assetList.innerHTML = '';
     seen.clear();
     
-    log(`Reading file: ${file.name} (${file.size} bytes)`, 'info');
+    log(`Offloading ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB) to background worker...`, 'info');
     
-    const reader = new FileReader();
-    
-    reader.onload = function(e) {
-        log(`File read to memory. Sending to WASM worker...`, 'info');
-        const arrayBuffer = e.target.result;
-        const uint8View = new Uint8Array(arrayBuffer);
-        
-        worker.postMessage({ 
-            command: 'process_unity_archive', 
-            payload: {
-                fileData: uint8View
-            }
-        });
-    };
-    
-    reader.onerror = function() {
-        log(`Failed to read file: ${file.name}`, 'error');
-    };
-
-    reader.readAsArrayBuffer(file);
+    // Pass the File object directly. Do NOT use FileReader on the main thread.
+    worker.postMessage({ 
+        command: 'PROCESS_FILE', 
+        payload: { file: file }
+    });
 }
 
 // Event Listeners
 dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => { 
     if (e.target.files[0]) handleFile(e.target.files[0]); 
-    // Reset the input value so the same file can be selected again sequentially
     e.target.value = ''; 
 });
 dropZone.addEventListener('dragover', e => { 
