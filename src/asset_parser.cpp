@@ -25,73 +25,45 @@ struct VertexData {
 
 extern "C" {
 
-    // ================================================
-    // MAIN ENTRY POINT - Receives raw data from JS
-    // ================================================
     EMSCRIPTEN_KEEPALIVE
     void process_unity_archive(unsigned char* data, int size) {
         if (size < 8) {
-            std::cout << "[C++] Error: Buffer too small (" << size << " bytes)" << std::endl;
+            std::cout << "[C++] Buffer too small (" << size << " bytes)" << std::endl;
             return;
         }
 
-        // Check for UnityFS signature
         if (std::strncmp(reinterpret_cast<char*>(data), "UnityFS", 7) == 0) {
             UnityFSHeader* header = reinterpret_cast<UnityFSHeader*>(data);
-            
-            std::cout << "[C++] ✅ Valid UnityFS bundle detected!" << std::endl;
-            std::cout << "[C++] Version: " << header->formatVersion << std::endl;
-            std::cout << "[C++] Unity Version: " << header->unityVersion << std::endl;
-            std::cout << "[C++] Total Size: " << header->size << " bytes" << std::endl;
-
-            // TODO: Add full decompression + asset parsing here later
-        } 
-        else {
-            std::cout << "[C++] Not a UnityFS header (false positive or different format)" << std::endl;
+            std::cout << "[C++] ✅ Valid UnityFS bundle! Size: " << header->size 
+                      << " bytes | Unity " << header->unityVersion << std::endl;
+        } else {
+            std::cout << "[C++] Not UnityFS header" << std::endl;
         }
     }
 
-    // Alternative entry point (offset-based) for future use
     EMSCRIPTEN_KEEPALIVE
     void process_unity_archive_offset(uint64_t bundleOffset, uint64_t dataStart, uint64_t blocksInfo) {
-        std::cout << "[C++] Offset-based call received: Bundle@0x" 
-                  << std::hex << bundleOffset 
-                  << " | DataStart@0x" << dataStart 
-                  << " | BlocksInfo@0x" << blocksInfo << std::dec << std::endl;
+        std::cout << "[C++] Offset call: 0x" << std::hex << bundleOffset << std::dec << std::endl;
     }
 
-    // Mesh deinterleaver - converts raw vertex buffer to OBJ format
     EMSCRIPTEN_KEEPALIVE
     char* deinterleave_mesh(unsigned char* buffer, int numVertices) {
-        if (!buffer || numVertices <= 0) {
-            return nullptr;
-        }
+        if (!buffer || numVertices <= 0) return nullptr;
 
-        std::string objData;
-        objData.reserve(numVertices * 150);  // Pre-allocate for performance
-
+        std::string obj;
+        obj.reserve(numVertices * 120);
         char line[128];
-        VertexData* vertices = reinterpret_cast<VertexData*>(buffer);
+        VertexData* v = reinterpret_cast<VertexData*>(buffer);
 
-        // Vertices
         for (int i = 0; i < numVertices; ++i) {
-            const VertexData& v = vertices[i];
-            snprintf(line, sizeof(line), "v %.6f %.6f %.6f\n", v.x, v.y, v.z);
-            objData += line;
+            snprintf(line, sizeof(line), "v %.6f %.6f %.6f\n", v[i].x, v[i].y, v[i].z);
+            obj += line;
+            snprintf(line, sizeof(line), "vn %.6f %.6f %.6f\n", v[i].nx, v[i].ny, v[i].nz);
+            obj += line;
         }
 
-        // Normals
-        for (int i = 0; i < numVertices; ++i) {
-            const VertexData& v = vertices[i];
-            snprintf(line, sizeof(line), "vn %.6f %.6f %.6f\n", v.nx, v.ny, v.nz);
-            objData += line;
-        }
-
-        // Return to JavaScript (Emscripten manages memory)
-        char* result = (char*)malloc(objData.size() + 1);
-        if (result) {
-            std::strcpy(result, objData.c_str());
-        }
+        char* result = (char*)malloc(obj.size() + 1);
+        if (result) strcpy(result, obj.c_str());
         return result;
     }
 }
