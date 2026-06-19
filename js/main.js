@@ -133,8 +133,7 @@ function handleAssetDiscovery(data) {
 }
 
 /**
- * File Handling: Restored to securely pass the File object directly.
- * This prevents the UI from freezing on large APKs/Bundles.
+ * File Handling: Pass the File object directly.
  */
 function handleFile(file) {
     if (!isWorkerReady) {
@@ -149,7 +148,6 @@ function handleFile(file) {
     
     log(`Offloading ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB) to background worker...`, 'info');
     
-    // Pass the File object directly. Do NOT use FileReader on the main thread.
     worker.postMessage({ 
         command: 'PROCESS_FILE', 
         payload: { file: file }
