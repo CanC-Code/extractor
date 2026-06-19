@@ -18,7 +18,7 @@ renderer.setPixelRatio(window.devicePixelRatio);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
 const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
 dirLight.position.set(10, 15, 10);
 scene.add(dirLight);
@@ -39,7 +39,6 @@ window.addEventListener('resize', () => {
 });
 
 // --- UI Binding ---
-const objLoader = new OBJLoader();
 const terminal = document.getElementById('terminal-log');
 const logContainer = document.getElementById('tab-logs');
 const statusText = document.getElementById('status-text');
@@ -47,32 +46,12 @@ const statusText = document.getElementById('status-text');
 function addLog(msg, type = 'normal') {
     const div = document.createElement('div');
     div.className = `log-entry ${type}`;
-    
-    // Format timestamp
     const now = new Date();
     const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
     
     div.innerText = `[${timeStr}] ${msg}`;
     terminal.appendChild(div);
     logContainer.scrollTop = logContainer.scrollHeight;
-}
-
-function loadModelToViewport(objBlobUrl, verts, faces) {
-    if (currentModel) scene.remove(currentModel);
-    addLog(`Injecting geometry into WebGL context...`, 'system');
-
-    objLoader.load(objBlobUrl, (object) => {
-        currentModel = object;
-        const box = new THREE.Box3().setFromObject(object);
-        const center = box.getCenter(new THREE.Vector3());
-        object.position.sub(center);
-        scene.add(object);
-
-        document.getElementById('model-stats').classList.remove('hidden');
-        document.getElementById('stat-verts').innerText = `V: ${verts}`;
-        document.getElementById('stat-faces').innerText = `F: ${faces}`;
-        addLog(`Geometry Rendered.`, 'success');
-    });
 }
 
 // --- Worker Setup ---
@@ -85,6 +64,7 @@ try {
 }
 
 let assetCount = 0;
+const uniqueAssets = new Set(); // Prevent duplicate listings
 
 worker.onmessage = function(e) {
     const { type, data, logType } = e.data;
@@ -94,22 +74,23 @@ worker.onmessage = function(e) {
         statusText.innerText = data;
     } else if (type === 'PROGRESS') {
         document.getElementById('progress-bar').value = data;
-    } else if (type === 'ASSET_FOUND') {
-        assetCount++;
-        document.getElementById('asset-count').innerText = assetCount;
-        
-        const li = document.createElement('li');
-        li.innerHTML = `
-            <div class="asset-info">
-                <span class="asset-name">${data.name}</span>
-                <span class="asset-meta">V: ${data.verts} | F: ${data.faces}</span>
-            </div>
-            <button class="btn-view" data-url="${data.blobUrl}" data-v="${data.verts}" data-f="${data.faces}">VIEW</button>
-        `;
-        li.querySelector('.btn-view').addEventListener('click', (ev) => {
-            loadModelToViewport(ev.target.getAttribute('data-url'), ev.target.getAttribute('data-v'), ev.target.getAttribute('data-f'));
-        });
-        document.getElementById('asset-list').appendChild(li);
+    } else if (type === 'ASSET_FOUND_META') {
+        // Only add unique actual asset names to the list
+        if (!uniqueAssets.has(data.name)) {
+            uniqueAssets.add(data.name);
+            assetCount++;
+            document.getElementById('asset-count').innerText = assetCount;
+            
+            const li = document.createElement('li');
+            li.innerHTML = `
+                <div class="asset-info">
+                    <span class="asset-name">${data.name}</span>
+                    <span class="asset-meta">Offset: 0x${data.offset.toString(16).toUpperCase()}</span>
+                </div>
+                <button class="btn-view disabled" disabled>Requires Wasm Unpack</button>
+            `;
+            document.getElementById('asset-list').appendChild(li);
+        }
     }
 };
 
@@ -121,24 +102,18 @@ worker.onerror = function(error) {
 const fileInput = document.getElementById('apk-upload');
 fileInput.addEventListener('change', (event) => {
     const file = event.target.files[0];
-    if (!file) {
-        addLog("File selection cancelled or failed.", "error");
-        return;
-    }
+    if (!file) return;
 
-    // INSTANT FEEDBACK
     terminal.innerHTML = '';
     document.getElementById('asset-list').innerHTML = '';
     assetCount = 0;
+    uniqueAssets.clear();
     document.getElementById('asset-count').innerText = "0";
     
     addLog(`MOUNTED: ${file.name}`, 'success');
     addLog(`SIZE: ${(file.size / 1024 / 1024).toFixed(2)} MB`, 'system');
     statusText.innerText = "Initiating Stream...";
     
-    // Pass to worker
     worker.postMessage({ type: 'PROCESS_FILE', file: file });
-
-    // Reset input so selecting the same file again still triggers the event
     event.target.value = ''; 
 });
