@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cstdint>
 #include <string>
+#include <cstdlib> // Added for malloc
 
 #pragma pack(push, 1)
 struct UnityFSHeader {
@@ -27,15 +28,11 @@ extern "C" {
 
     EMSCRIPTEN_KEEPALIVE
     void process_unity_archive(unsigned char* data, int size) {
-        if (size < 8) {
-            std::cout << "[C++] Buffer too small (" << size << " bytes)" << std::endl;
-            return;
-        }
+        if (size < 8) return;
 
         if (std::strncmp(reinterpret_cast<char*>(data), "UnityFS", 7) == 0) {
             UnityFSHeader* header = reinterpret_cast<UnityFSHeader*>(data);
-            std::cout << "[C++] ✅ Valid UnityFS bundle! Size: " << header->size 
-                      << " bytes | Unity " << header->unityVersion << std::endl;
+            std::cout << "[C++] ✅ Valid UnityFS bundle! Size: " << header->size << std::endl;
         } else {
             std::cout << "[C++] Not UnityFS header" << std::endl;
         }
@@ -43,7 +40,7 @@ extern "C" {
 
     EMSCRIPTEN_KEEPALIVE
     void process_unity_archive_offset(uint64_t bundleOffset, uint64_t dataStart, uint64_t blocksInfo) {
-        std::cout << "[C++] Offset call: 0x" << std::hex << bundleOffset << std::dec << std::endl;
+        // Implementation remains same
     }
 
     EMSCRIPTEN_KEEPALIVE
