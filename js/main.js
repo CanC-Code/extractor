@@ -1,48 +1,45 @@
 // ============================================================
-// MAIN.JS — Three.js Viewport + Worker Bridge
+// MAIN.JS — Three.js Viewport + Worker Bridge + Save-to-Disk
 // ============================================================
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { OBJLoader }     from 'three/addons/loaders/OBJLoader.js';
 
 // ============================================================
-// VIEWPORT SETUP
+// VIEWPORT
 // ============================================================
 const container = document.getElementById('viewport-container');
 const canvas    = document.getElementById('viewer-canvas');
-
-const scene = new THREE.Scene();
+const scene     = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0a0c);
 
-const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 5000);
+const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.001, 10000);
 camera.position.set(0, 5, 10);
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setSize(container.clientWidth, container.clientHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
+renderer.setSize(container.clientWidth, container.clientHeight);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
+controls.enableDamping  = true;
+controls.dampingFactor  = 0.08;
+controls.screenSpacePanning = false;
 
-// Lighting rig
 scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-dirLight.position.set(10, 20, 10);
-dirLight.castShadow = true;
-scene.add(dirLight);
-scene.add(new THREE.HemisphereLight(0x223344, 0x000000, 0.5));
-scene.add(new THREE.GridHelper(30, 30, 0x222222, 0x181818));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+sun.position.set(8, 16, 8);
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0x334455, 0x000000, 0.5));
+scene.add(new THREE.GridHelper(40, 40, 0x1c1c1c, 0x141414));
 
 let currentModel = null;
+let wireframe = false;
 
-function animate() {
+(function animate() {
     requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
-}
-animate();
+})();
 
 window.addEventListener('resize', () => {
     camera.aspect = container.clientWidth / container.clientHeight;
@@ -50,205 +47,253 @@ window.addEventListener('resize', () => {
     renderer.setSize(container.clientWidth, container.clientHeight);
 });
 
-// ============================================================
-// UI STATE
-// ============================================================
-const terminal      = document.getElementById('terminal-log');
-const logContainer  = document.getElementById('tab-logs');
-const statusText    = document.getElementById('status-text');
-const progressBar   = document.getElementById('progress-bar');
-const assetList     = document.getElementById('asset-list');
-const modelList     = document.getElementById('model-list');
-const assetCount    = document.getElementById('asset-count');
-const modelCount    = document.getElementById('model-count');
-const modelStats    = document.getElementById('model-stats');
-const statVerts     = document.getElementById('stat-verts');
-const statFaces     = document.getElementById('stat-faces');
-const noModelsMsg   = document.getElementById('no-models-msg');
+// Double-tap canvas to toggle wireframe
+let lastTap = 0;
+canvas.addEventListener('touchend', () => {
+    const now = Date.now();
+    if (now - lastTap < 280 && currentModel) toggleWireframe();
+    lastTap = now;
+}, { passive: true });
+canvas.addEventListener('dblclick', () => { if (currentModel) toggleWireframe(); });
 
-let totalAssets = 0;
-let totalModels = 0;
-const seenAssets = new Set();
-const seenModels = new Set();
-
-// ============================================================
-// LOGGING
-// ============================================================
-function addLog(msg, type = 'normal') {
-    const div = document.createElement('div');
-    div.className = `log-entry ${type}`;
-    const now = new Date();
-    const ts  = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad3(now.getMilliseconds())}`;
-    div.innerText = `[${ts}] ${msg}`;
-    terminal.appendChild(div);
-    // Keep log trimmed to last 500 entries to avoid DOM bloat on large APKs
-    while (terminal.children.length > 500) terminal.removeChild(terminal.firstChild);
-    logContainer.scrollTop = logContainer.scrollHeight;
+function toggleWireframe() {
+    wireframe = !wireframe;
+    currentModel.traverse(c => { if (c.isMesh) c.material.wireframe = wireframe; });
 }
 
-const pad  = n => String(n).padStart(2, '0');
-const pad3 = n => String(n).padStart(3, '0');
+// ============================================================
+// OBJ LOADER
+// ============================================================
+const objLoader = new OBJLoader();
 
-// ============================================================
-// TAB SWITCHING
-// ============================================================
-window.switchTab = function(tabName) {
-    document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-    document.getElementById('tab-' + tabName).classList.remove('hidden');
-    // Find the button that matches by data-tab attribute
-    document.querySelector(`.tab-btn[data-tab="${tabName}"]`).classList.add('active');
-};
-
-// ============================================================
-// MODEL VIEWER
-// ============================================================
 function loadObjText(objText, name) {
     if (currentModel) {
         scene.remove(currentModel);
         currentModel.traverse(c => {
             if (c.geometry) c.geometry.dispose();
-            if (c.material) c.material.dispose();
+            if (c.material) { if (Array.isArray(c.material)) c.material.forEach(m=>m.dispose()); else c.material.dispose(); }
         });
         currentModel = null;
     }
+    wireframe = false;
 
-    const loader = new OBJLoader();
-    const obj = loader.parse(objText);
+    const obj = objLoader.parse(objText);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x7ec8a0, roughness: 0.55, metalness: 0.05 });
+    obj.traverse(c => { if (c.isMesh) { c.material = mat; c.castShadow = true; } });
 
-    // Apply a clean material
-    const mat = new THREE.MeshStandardMaterial({
-        color: 0x88ccaa,
-        roughness: 0.6,
-        metalness: 0.1,
-        wireframe: false
-    });
-    obj.traverse(c => { if (c.isMesh) c.material = mat; });
-
-    // Auto-center and scale
-    const box = new THREE.Box3().setFromObject(obj);
+    // Auto-center + scale
+    const box    = new THREE.Box3().setFromObject(obj);
     const center = box.getCenter(new THREE.Vector3());
     const size   = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
-    const scale  = maxDim > 0 ? 6 / maxDim : 1;
+    const scale  = maxDim > 0 ? 8 / maxDim : 1;
     obj.scale.setScalar(scale);
-    obj.position.sub(center.multiplyScalar(scale));
+    obj.position.copy(center.multiplyScalar(-scale));
+    obj.position.y -= box.min.y * scale;
 
     scene.add(obj);
     currentModel = obj;
 
-    // Stats
+    // Reset camera
+    camera.position.set(0, size.y * scale * 0.8, size.z * scale * 2.5 || 10);
+    controls.target.set(0, size.y * scale * 0.3, 0);
+    controls.update();
+
+    // Stats overlay
     let verts = 0, faces = 0;
     obj.traverse(c => {
         if (c.isMesh && c.geometry) {
             verts += c.geometry.attributes.position?.count || 0;
-            faces += (c.geometry.index ? c.geometry.index.count / 3 : (c.geometry.attributes.position?.count || 0) / 3);
+            faces += c.geometry.index
+                ? c.geometry.index.count / 3
+                : (c.geometry.attributes.position?.count || 0) / 3;
         }
     });
-    statVerts.textContent = `V: ${verts.toLocaleString()}`;
-    statFaces.textContent = `F: ${Math.floor(faces).toLocaleString()}`;
-    modelStats.classList.remove('hidden');
-
-    addLog(`Loaded model: ${name} | ${verts.toLocaleString()} verts, ${Math.floor(faces).toLocaleString()} faces`, 'success');
-    statusText.innerText = `Viewing: ${name}`;
+    document.getElementById('stat-verts').textContent = `V: ${verts.toLocaleString()}`;
+    document.getElementById('stat-faces').textContent = `F: ${Math.floor(faces).toLocaleString()}`;
+    document.getElementById('model-stats').classList.remove('hidden');
+    document.getElementById('stat-name').textContent  = name;
 }
 
-// Toggle wireframe with double-tap on canvas
-let lastTap = 0;
-canvas.addEventListener('touchend', () => {
-    const now = Date.now();
-    if (now - lastTap < 300 && currentModel) {
-        currentModel.traverse(c => {
-            if (c.isMesh) c.material.wireframe = !c.material.wireframe;
-        });
+// ============================================================
+// UI STATE
+// ============================================================
+const terminal     = document.getElementById('terminal-log');
+const logContainer = document.getElementById('tab-logs');
+const statusText   = document.getElementById('status-text');
+const progressBar  = document.getElementById('progress-bar');
+const modelList    = document.getElementById('model-list');
+const assetList    = document.getElementById('asset-list');
+const modelCountEl = document.getElementById('model-count');
+const assetCountEl = document.getElementById('asset-count');
+const noModelsMsg  = document.getElementById('no-models-msg');
+
+let totalModels = 0;
+let totalAssets = 0;
+const seenModels = new Set();
+const seenAssets = new Set();
+
+// In-memory store of all OBJ texts for saving
+const modelStore = {}; // name → objText
+
+// ============================================================
+// LOGGING
+// ============================================================
+function addLog(msg, type = 'normal') {
+    const div  = document.createElement('div');
+    div.className = `log-entry ${type}`;
+    const now = new Date();
+    const ts  = `${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}.${p3(now.getMilliseconds())}`;
+    div.textContent = `[${ts}] ${msg}`;
+    terminal.appendChild(div);
+    while (terminal.children.length > 800) terminal.removeChild(terminal.firstChild);
+    logContainer.scrollTop = logContainer.scrollHeight;
+}
+const p2 = n => String(n).padStart(2,'0');
+const p3 = n => String(n).padStart(3,'0');
+
+// ============================================================
+// TAB SWITCHING
+// ============================================================
+window.switchTab = function(name) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.remove('hidden');
+    document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
+};
+
+// ============================================================
+// MODEL VIEWER — invoked from model card buttons
+// ============================================================
+window.viewModel = function(key) {
+    const obj = modelStore[key];
+    if (!obj) { addLog(`OBJ data not found for: ${key}`, 'error'); return; }
+    addLog(`Loading: ${key}`, 'system');
+    statusText.textContent = `Viewing: ${key}`;
+    try {
+        loadObjText(obj, key);
+        // Switch to viewport (scroll up on mobile)
+        container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch(e) {
+        addLog(`Render error: ${e.message}`, 'error');
     }
-    lastTap = now;
-});
-
-// ============================================================
-// ASSET LIST BUILDERS
-// ============================================================
-
-// Type → badge color map
-const TYPE_COLORS = {
-    model:    '#00e676',
-    texture:  '#29b6f6',
-    audio:    '#ab47bc',
-    material: '#ffca28',
-    scene:    '#ff7043',
-    other:    '#666',
 };
 
-const TYPE_LABELS = {
-    model:    '3D MODEL',
-    texture:  'TEXTURE',
-    audio:    'AUDIO',
-    material: 'MATERIAL',
-    scene:    'SCENE',
-    other:    'ASSET',
+// ============================================================
+// SAVE OBJ — trigger browser download
+// ============================================================
+window.saveModel = function(key) {
+    const objText = modelStore[key];
+    if (!objText) { addLog(`No data to save for: ${key}`, 'error'); return; }
+    const safeFileName = key.replace(/[^a-zA-Z0-9_\-]/g, '_') + '.obj';
+    const blob = new Blob([objText], { type: 'text/plain' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = safeFileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    addLog(`Saved: ${safeFileName}`, 'success');
 };
+
+// ============================================================
+// SAVE ALL — zip all OBJs using JSZip (loaded dynamically)
+// ============================================================
+window.saveAllModels = async function() {
+    if (totalModels === 0) return;
+    statusText.textContent = 'Packaging all models…';
+    addLog(`Packaging ${totalModels} model(s) into ZIP…`, 'system');
+
+    try {
+        // Dynamically load JSZip from CDN
+        if (typeof JSZip === 'undefined') {
+            await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
+        }
+        const zip = new JSZip();
+        for (const [key, text] of Object.entries(modelStore)) {
+            const fname = key.replace(/[^a-zA-Z0-9_\-]/g, '_') + '.obj';
+            zip.file(fname, text);
+        }
+        const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = 'extracted_models.zip';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        addLog(`ZIP saved: ${totalModels} models (${(blob.size/1024).toFixed(0)} KB)`, 'success');
+        statusText.textContent = `Saved ${totalModels} model(s).`;
+    } catch(e) {
+        addLog(`ZIP error: ${e.message}`, 'error');
+    }
+};
+
+function loadScript(src) {
+    return new Promise((res, rej) => {
+        const s  = document.createElement('script');
+        s.src    = src;
+        s.onload = res;
+        s.onerror= () => rej(new Error(`Failed to load ${src}`));
+        document.head.appendChild(s);
+    });
+}
+
+// ============================================================
+// BUILD MODEL CARD
+// ============================================================
+function addModelCard(data) {
+    const key = data.name;
+    if (seenModels.has(key)) return;
+    seenModels.add(key);
+    totalModels++;
+    modelCountEl.textContent = totalModels;
+    noModelsMsg.classList.add('hidden');
+
+    // Store OBJ for view + save
+    modelStore[key] = data.objText;
+
+    const li = document.createElement('li');
+    li.className = 'model-card';
+    li.innerHTML = `
+        <div class="mc-info">
+            <span class="mc-badge">OBJ</span>
+            <span class="mc-name">${esc(key)}</span>
+            <span class="mc-meta">${data.vertexCount.toLocaleString()} verts · ${data.faceCount.toLocaleString()} faces</span>
+            <span class="mc-src">${esc(shortSrc(data.sourceName))}</span>
+        </div>
+        <div class="mc-actions">
+            <button class="btn-view"  onclick="viewModel('${escAttr(key)}')">VIEW</button>
+            <button class="btn-save"  onclick="saveModel('${escAttr(key)}')">⬇ OBJ</button>
+        </div>
+    `;
+    modelList.appendChild(li);
+}
 
 function addAssetEntry(data) {
     if (seenAssets.has(data.name)) return;
     seenAssets.add(data.name);
     totalAssets++;
-    assetCount.textContent = totalAssets;
-
-    const color = TYPE_COLORS[data.assetType] || TYPE_COLORS.other;
-    const label = TYPE_LABELS[data.assetType] || 'ASSET';
+    assetCountEl.textContent = totalAssets;
     const li = document.createElement('li');
+    li.className = 'asset-entry';
     li.innerHTML = `
-        <div class="asset-info">
-            <span class="asset-badge" style="background:${color}20;color:${color};border-color:${color}40">${label}</span>
-            <span class="asset-name">${escHtml(data.name)}</span>
-            <span class="asset-meta">Offset: 0x${data.offset.toString(16).toUpperCase()}</span>
-        </div>
+        <span class="asset-name">${esc(data.name)}</span>
+        <span class="asset-meta">0x${(data.offset||0).toString(16).toUpperCase()}</span>
     `;
     assetList.appendChild(li);
 }
 
-function addModelEntry(data) {
-    if (seenModels.has(data.name)) return;
-    seenModels.add(data.name);
-    totalModels++;
-    modelCount.textContent = totalModels;
-    noModelsMsg.classList.add('hidden');
-
-    const ext = data.ext ? data.ext.replace('.', '').toUpperCase() : '?';
-    const li = document.createElement('li');
-    li.className = 'model-entry';
-    li.dataset.name = data.name;
-
-    if (data.viewable) {
-        li.innerHTML = `
-            <div class="asset-info">
-                <span class="asset-badge model-badge">${ext}</span>
-                <span class="asset-name">${escHtml(data.name)}</span>
-                <span class="asset-meta">Offset: 0x${data.offset.toString(16).toUpperCase()}</span>
-            </div>
-            <button class="btn-view" onclick="requestModelView('${escAttr(data.name)}', ${data.offset})">VIEW</button>
-        `;
-    } else {
-        li.innerHTML = `
-            <div class="asset-info">
-                <span class="asset-badge model-badge">${ext}</span>
-                <span class="asset-name">${escHtml(data.name)}</span>
-                <span class="asset-meta">Offset: 0x${data.offset.toString(16).toUpperCase()} · Packed (UnityFS)</span>
-            </div>
-            <button class="btn-view btn-packed" title="Asset is compressed inside UnityFS bundle. Wasm decompressor required.">PACKED</button>
-        `;
-    }
-
-    modelList.appendChild(li);
+function shortSrc(s) {
+    if (!s) return '';
+    const parts = s.split('/');
+    return parts[parts.length - 1].slice(0, 28);
 }
-
-// Called from inline onclick — needs to be global
-window.requestModelView = function(name, offset) {
-    addLog(`Requesting model view: ${name}`, 'system');
-    statusText.innerText = `Extracting ${name}...`;
-    // Signal the worker to extract the raw OBJ at this offset
-    worker.postMessage({ type: 'EXTRACT_MODEL', name, offset });
-};
+function esc(s)     { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escAttr(s) { return String(s).replace(/'/g,"\\'"); }
 
 // ============================================================
 // WORKER
@@ -256,107 +301,74 @@ window.requestModelView = function(name, offset) {
 let worker;
 try {
     worker = new Worker('js/worker.js');
-    addLog('Background parsing thread spawned.', 'system');
-} catch (e) {
-    addLog(`Failed to spawn worker: ${e.message}`, 'error');
+    addLog('Parse worker spawned.', 'system');
+} catch(e) {
+    addLog(`Worker spawn failed: ${e.message}`, 'error');
 }
 
-worker.onmessage = function(e) {
-    const { type, data, logType } = e.data;
-
+worker.onmessage = function({ data: msg }) {
+    const { type, data, logType } = msg;
     switch (type) {
         case 'LOG':
             addLog(data, logType || 'normal');
-            statusText.innerText = data.length > 80 ? data.slice(0, 80) + '…' : data;
+            if (data.length < 90) statusText.textContent = data;
             break;
-
         case 'PROGRESS':
             progressBar.value = data;
             break;
-
+        case 'MODEL_FOUND':
+            addModelCard(data);
+            if (totalModels === 1) switchTab('models');
+            break;
         case 'ASSET_FOUND_META':
             addAssetEntry(data);
             break;
-
-        case 'MODEL_FOUND':
-            addModelEntry(data);
-            // Switch to Models tab automatically when first model found
-            if (totalModels === 1) {
-                switchTab('models');
-            }
-            break;
-
         case 'SCAN_COMPLETE':
             progressBar.value = 100;
-            addLog(`Scan finished. ${totalModels} model(s), ${totalAssets} total assets detected.`, 'success');
-            statusText.innerText = `Done. ${totalModels} model(s) found.`;
-            if (totalModels === 0) {
+            statusText.textContent = `Complete. ${data.modelCount} model(s) found.`;
+            addLog(`Scan complete — ${data.modelCount} mesh(es), ${data.assetCount} assets.`, 'success');
+            document.getElementById('save-all-btn').style.display = data.modelCount > 0 ? 'inline-flex' : 'none';
+            if (data.modelCount === 0) {
                 noModelsMsg.classList.remove('hidden');
-                noModelsMsg.textContent = 'No 3D models detected in this archive. The APK may use proprietary or encrypted bundles.';
+                noModelsMsg.textContent = 'No Mesh objects found. The APK may use Addressables with encrypted bundles, or a non-Unity engine.';
             }
-            break;
-
-        case 'MODEL_DATA':
-            // Worker extracted raw OBJ text from the file
-            if (data.objText) {
-                loadObjText(data.objText, data.name);
-            } else {
-                addLog(`Could not extract model data for: ${data.name}`, 'error');
-            }
-            break;
-
-        default:
             break;
     }
 };
 
-worker.onerror = function(error) {
-    addLog(`Worker Error: ${error.message}`, 'error');
+worker.onerror = function(err) {
+    addLog(`Worker error: ${err.message}`, 'error');
 };
 
 // ============================================================
 // FILE INPUT
 // ============================================================
-const fileInput = document.getElementById('apk-upload');
-fileInput.addEventListener('change', (event) => {
+document.getElementById('apk-upload').addEventListener('change', (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
-    // Reset state
-    terminal.innerHTML = '';
-    assetList.innerHTML = '';
-    modelList.innerHTML = '';
-    totalAssets = 0;
-    totalModels = 0;
-    seenAssets.clear();
-    seenModels.clear();
-    assetCount.textContent = '0';
-    modelCount.textContent = '0';
-    modelStats.classList.add('hidden');
+    // Reset
+    terminal.innerHTML         = '';
+    modelList.innerHTML        = '';
+    assetList.innerHTML        = '';
+    totalModels = 0; totalAssets = 0;
+    seenModels.clear(); seenAssets.clear();
+    Object.keys(modelStore).forEach(k => delete modelStore[k]);
+    modelCountEl.textContent   = '0';
+    assetCountEl.textContent   = '0';
+    progressBar.value          = 0;
+    document.getElementById('model-stats').classList.add('hidden');
+    document.getElementById('save-all-btn').style.display = 'none';
     noModelsMsg.classList.remove('hidden');
-    noModelsMsg.textContent = 'Scanning archive for 3D models…';
-    progressBar.value = 0;
+    noModelsMsg.textContent = 'Scanning…';
 
-    if (currentModel) {
-        scene.remove(currentModel);
-        currentModel = null;
-    }
-
-    addLog(`MOUNTED: ${file.name}`, 'success');
-    addLog(`SIZE: ${(file.size / 1024 / 1024).toFixed(2)} MB`, 'system');
-    statusText.innerText = 'Scanning…';
+    if (currentModel) { scene.remove(currentModel); currentModel = null; }
 
     switchTab('logs');
     worker.postMessage({ type: 'PROCESS_FILE', file });
     event.target.value = '';
 });
 
-// ============================================================
-// HELPERS
-// ============================================================
-function escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function escAttr(s) {
-    return s.replace(/'/g,"\\'");
-}
+window.onerror = function(msg, src, line) {
+    addLog(`JS ERROR: ${msg} (line ${line})`, 'error');
+};
