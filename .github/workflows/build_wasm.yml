@@ -10,6 +10,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    
+    # Required permission to push the built files back to your repository
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Code
@@ -31,20 +35,15 @@ jobs:
       - name: Show Build Log
         run: cat src/build.log
 
-      - name: List All Generated Files
+      - name: Commit and Push Built Files
         run: |
-          echo "=== Root build/ ==="
-          ls -la build/ 2>/dev/null || echo "No root build/"
-          echo "=== src/build/ ==="
-          ls -la src/build/ 2>/dev/null || echo "No src/build/"
-        shell: bash
-
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: wasm-parser-build
-          path: |
-            build/
-            src/build/
-          if-no-files-found: warn
-          retention-days: 30
+          # Configure git so the bot can commit
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Add the build directory and commit
+          git add build/
+          git commit -m "Auto-compile WASM artifacts" || echo "No changes to commit"
+          
+          # Push the compiled files back to the repository so GitHub Pages can host them
+          git push
