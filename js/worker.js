@@ -1,51 +1,52 @@
-// js/worker.js - FIXED & INTEGRATED VERSION
-// Place this in your js/ folder. Ensure ../build/parser.js and ../build/parser.wasm exist.
-
+// js/worker.js - Full Integrated Version
 importScripts('../build/parser.js');
+
+let wasmModuleReady = false;
+
+Module.onRuntimeInitialized = function() {
+    wasmModuleReady = true;
+    self.postMessage({ 
+        type: 'LOG', 
+        data: '✅ WASM Parser Engine successfully initialized!', 
+        logType: 'success' 
+    });
+};
 
 self.onmessage = async function(e) {
     if (e.data.type === 'PROCESS_FILE') {
         const file = e.data.file;
-        const chunkSize = 10 * 1024 * 1024; // 10MB chunks
+        const chunkSize = 10 * 1024 * 1024; // 10MB
         let offset = 0;
 
         self.postMessage({ 
             type: 'LOG', 
-            data: `Worker initialized. Loading WASM parser engine...`, 
+            data: `Starting chunked scan of ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)...`, 
             logType: 'system' 
         });
 
-        // Wait for WASM to be ready
-        if (typeof Module === 'undefined' || !Module.onRuntimeInitialized) {
-            self.postMessage({ 
-                type: 'LOG', 
-                data: `Waiting for WASM runtime initialization...`, 
-                logType: 'system' 
-            });
-        }
-
-        const processBundle = (absoluteOffset, dataStart, blocksInfo, version) => {
-            self.postMessage({ 
-                type: 'LOG', 
-                data: `🚀 Bridging to C++ at 0x${absoluteOffset.toString(16).toUpperCase()} (v${version})`, 
-                logType: 'success' 
-            });
+        const processBundle = (bundleOffset, dataStart, blocksInfo, version) => {
+            if (!wasmModuleReady) {
+                self.postMessage({ 
+                    type: 'LOG', 
+                    data: 'WASM not ready yet - will retry on next bundle', 
+                    logType: 'warning' 
+                });
+                return;
+            }
 
             try {
-                // Call the Emscripten-exported function
-                if (typeof Module._process_unity_archive === 'function') {
-                    Module._process_unity_archive(
-                        Number(absoluteOffset), 
-                        Number(dataStart), 
-                        Number(blocksInfo)
-                    );
-                } else {
-                    self.postMessage({ 
-                        type: 'LOG', 
-                        data: `WASM function _process_unity_archive not found yet.`, 
-                        logType: 'warning' 
-                    });
-                }
+                // Use BigInt because file offsets can exceed 2^53
+                Module._process_unity_archive(
+                    BigInt(bundleOffset),
+                    BigInt(dataStart),
+                    BigInt(blocksInfo)
+                );
+
+                self.postMessage({ 
+                    type: 'LOG', 
+                    data: `📦 Sent bundle to WASM: 0x${bundleOffset.toString(16).toUpperCase()} (${version})`, 
+                    logType: 'success' 
+                });
             } catch (err) {
                 self.postMessage({ 
                     type: 'LOG', 
@@ -59,7 +60,7 @@ self.onmessage = async function(e) {
             if (offset >= file.size) {
                 self.postMessage({ 
                     type: 'LOG', 
-                    data: `Full scan complete. WASM extraction in progress.`, 
+                    data: '✅ Full file scan completed. WASM extraction running.', 
                     logType: 'success' 
                 });
                 self.postMessage({ type: 'PROGRESS', data: 100 });
@@ -71,43 +72,46 @@ self.onmessage = async function(e) {
 
             reader.onload = function(evt) {
                 const buffer = evt.target.result;
-                const view = new DataView(buffer);
                 const u8 = new Uint8Array(buffer);
+                const view = new DataView(buffer);
 
-                const percent = Math.min(100, Math.floor((offset / file.size) * 100));
+                const percent = Math.min(100, Math.floor(((offset + chunkSize) / file.size) * 100));
                 self.postMessage({ type: 'PROGRESS', data: percent });
 
-                // === UNITYFS HEADER SCAN ===
+                // === Scan for UnityFS headers ===
                 for (let i = 0; i < u8.length - 7; i++) {
-                    if (u8[i] === 85 && u8[i+1] === 110 && u8[i+2] === 105 && 
+                    if (u8[i]     === 85 && u8[i+1] === 110 && u8[i+2] === 105 && 
                         u8[i+3] === 116 && u8[i+4] === 121 && u8[i+5] === 70 && u8[i+6] === 83) {
                         
                         const absoluteOffset = offset + i;
 
                         try {
-                            const { dataStart, blocksInfo, unityVersion } = 
-                                parseUnityFSHeader(view, i, absoluteOffset, file.size);
-                            
-                            if (dataStart && blocksInfo) {
-                                processBundle(absoluteOffset, dataStart, blocksInfo, unityVersion);
+                            const headerInfo = parseUnityFSHeader(view, i, absoluteOffset, file.size);
+                            if (headerInfo) {
+                                processBundle(
+                                    absoluteOffset, 
+                                    headerInfo.dataStart, 
+                                    headerInfo.blocksInfo, 
+                                    headerInfo.version
+                                );
                             }
                         } catch (err) {
-                            // False positive - common in compressed data
+                            // False positive - ignore
                         }
                     }
                 }
 
-                // Light asset name extraction
+                // Extract asset names (meshes, textures, etc.)
                 extractRealAssetNames(u8, offset);
 
                 offset += chunkSize;
-                setTimeout(readNextChunk, 5); // Small delay to keep UI responsive
+                setTimeout(readNextChunk, 8); // Keep UI responsive
             };
 
-            reader.onerror = () => {
+            reader.onerror = function() {
                 self.postMessage({ 
                     type: 'LOG', 
-                    data: `Read error at offset ${offset}`, 
+                    data: `Error reading chunk at offset ${offset}`, 
                     logType: 'error' 
                 });
             };
@@ -119,13 +123,14 @@ self.onmessage = async function(e) {
     }
 };
 
-// Keep your existing helper functions (updated for robustness)
+// ====================== Helper Functions ======================
+
 function parseUnityFSHeader(view, localOffset, absoluteOffset, totalFileSize) {
     let pos = localOffset;
 
     function readString(maxLen = 64) {
         let str = '';
-        const start = pos;
+        let start = pos;
         while (pos < view.byteLength && (pos - start) < maxLen) {
             const char = view.getUint8(pos++);
             if (char === 0) return str;
@@ -145,7 +150,7 @@ function parseUnityFSHeader(view, localOffset, absoluteOffset, totalFileSize) {
     const unityVersion = readString(32);
     const unityRevision = readString(32);
 
-    if (pos + 20 > view.byteLength) throw new Error("Sizes truncated");
+    if (pos + 20 > view.byteLength) throw new Error("Header sizes truncated");
 
     const size = Number(view.getBigUint64(pos, false)); pos += 8;
     const ciBlocksInfoSize = view.getUint32(pos, false); pos += 4;
@@ -167,23 +172,24 @@ function parseUnityFSHeader(view, localOffset, absoluteOffset, totalFileSize) {
 
     self.postMessage({ 
         type: 'LOG', 
-        data: `[BUNDLE] 0x${absoluteOffset.toString(16).toUpperCase()} | ${unityVersion} | ~${(size/1024/1024).toFixed(1)}MB`, 
+        data: `[BUNDLE FOUND] 0x${absoluteOffset.toString(16).toUpperCase()} | ${unityVersion} | ${(size/1024/1024).toFixed(1)}MB`, 
         logType: 'success' 
     });
 
     return {
         dataStart: dataStartAbsoluteOffset,
         blocksInfo: blocksInfoAbsoluteOffset,
-        unityVersion
+        version: unityVersion
     };
 }
 
 function extractRealAssetNames(u8, chunkOffset) {
     let str = "";
-    let matches = 0;
+    let count = 0;
 
     for (let i = 0; i < u8.length; i++) {
         const cc = u8[i];
+
         if (cc >= 32 && cc <= 126) {
             str += String.fromCharCode(cc);
         } else {
@@ -191,14 +197,18 @@ function extractRealAssetNames(u8, chunkOffset) {
                 const lower = str.toLowerCase();
                 if (lower.includes('.mesh') || lower.includes('.mat') || 
                     lower.includes('.tex') || lower.includes('.png') || 
-                    lower.includes('.asset') || str.startsWith('CAB-')) {
-                    
+                    lower.includes('.asset') || lower.includes('.prefab') || 
+                    str.startsWith('CAB-')) {
+
                     self.postMessage({ 
                         type: 'ASSET_FOUND_META', 
-                        data: { name: str.substring(0, 120), offset: chunkOffset + i - str.length } 
+                        data: { 
+                            name: str.substring(0, 128), 
+                            offset: chunkOffset + i - str.length 
+                        } 
                     });
-                    matches++;
-                    if (matches > 15) break;
+                    count++;
+                    if (count > 20) break; // limit spam
                 }
             }
             str = "";
