@@ -1,6 +1,17 @@
 // js/worker.js
 
 var Module = {
+    // Emscripten inside a worker thinks its base directory is the worker's directory (/js/).
+    // We must intercept the WASM request and strictly point it to the /build/ directory.
+    locateFile: function(path, prefix) {
+        if (path.endsWith('.wasm')) {
+            // This reliably calculates the absolute URL to your build folder.
+            // e.g., if worker is at https://canc-code.github.io/extractor/js/worker.js
+            // it forces the fetch to https://canc-code.github.io/extractor/build/parser.wasm
+            return new URL('../build/' + path, self.location.href).href;
+        }
+        return prefix + path;
+    },
     onRuntimeInitialized: function() {
         self.postMessage({ type: 'READY' });
     },
@@ -15,10 +26,8 @@ var Module = {
 self.Module = Module;
 
 try {
+    // Load the JS glue code
     importScripts('../build/parser.js'); 
-    if (Module.calledRun) {
-        self.postMessage({ type: 'READY' });
-    }
 } catch (error) {
     self.postMessage({ 
         type: 'ERROR', 
@@ -33,9 +42,6 @@ self.onmessage = function(event) {
     try {
         switch (command) {
             
-            // -------------------------------------------------------------
-            // Restored Logic: PROCESS_FILE
-            // -------------------------------------------------------------
             case 'PROCESS_FILE': {
                 const file = payload.file;
                 self.postMessage({ type: 'LOG', logType: 'info', data: `Worker loading ${file.name} into memory...` });
@@ -59,7 +65,7 @@ self.onmessage = function(event) {
                         [dataPtr, size]          
                     );
 
-                    // Free memory to prevent crash
+                    // Free memory to prevent memory leaks and crashing
                     Module._free(dataPtr);
                     self.postMessage({ type: 'SUCCESS', command: 'PROCESS_FILE' });
 
@@ -69,9 +75,6 @@ self.onmessage = function(event) {
                 break;
             }
 
-            // -------------------------------------------------------------
-            // Mesh Extraction
-            // -------------------------------------------------------------
             case 'deinterleave_mesh': {
                 const meshData = payload.meshData; 
                 const numVertices = payload.numVertices;
