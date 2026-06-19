@@ -23,7 +23,7 @@ self.onmessage = function(e) {
                         found = true;
                         break;
                     }
-                    // Report progress to UI every 50MB so the browser doesn't look frozen
+                    // Report progress every 50MB to prevent the UI from freezing
                     if (i % 50000000 === 0) {
                         self.postMessage({ type: 'PROGRESS', data: 5 + (i / u8.length) * 20 });
                     }
@@ -33,7 +33,7 @@ self.onmessage = function(e) {
                     throw new Error("Scanned entire APK. No UnityFS bundles found inside.");
                 }
             } 
-            // 2. Otherwise, treat as a raw .bundle
+            // 2. Treat as a raw bundle if not an APK
             else {
                 offset = 0;
             }
