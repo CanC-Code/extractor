@@ -32,18 +32,14 @@ jobs:
           ./build.sh 2>&1 | tee build.log
         shell: bash
 
-      - name: Show Build Log
-        run: cat src/build.log
-
       - name: Commit and Push Built Files
         run: |
-          # Configure git so the bot can commit
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # Add the build directory and commit
-          git add build/
-          git commit -m "Auto-compile WASM artifacts" || echo "No changes to commit"
+          # Force add the files to bypass any .gitignore restrictions
+          git add -f build/parser.js
+          git add -f build/parser.wasm
           
-          # Push the compiled files back to the repository so GitHub Pages can host them
+          git commit -m "Auto-compile WASM artifacts" || echo "No changes to commit"
           git push
