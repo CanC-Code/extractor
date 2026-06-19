@@ -31,11 +31,11 @@ jobs:
       - name: Show Build Log
         run: cat src/build.log
 
-      - name: List Generated Files
+      - name: List All Generated Files
         run: |
-          echo "=== Files in build/ directory ==="
-          ls -la build/ || echo "build/ directory not found!"
-          echo "=== Files in src/build/ (if exists) ==="
+          echo "=== Root build/ ==="
+          ls -la build/ 2>/dev/null || echo "No root build/"
+          echo "=== src/build/ ==="
           ls -la src/build/ 2>/dev/null || echo "No src/build/"
         shell: bash
 
@@ -48,8 +48,3 @@ jobs:
             src/build/
           if-no-files-found: warn
           retention-days: 30
-
-      - name: Final Verification
-        run: |
-          echo "✅ Workflow completed."
-          echo "Check the 'Upload Build Artifacts' step to download the output."
