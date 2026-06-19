@@ -1,35 +1,13 @@
 // js/worker.js
 
 var Module = {
-    // Override the default WASM fetching to use a pure relative path
-    instantiateWasm: function(info, receiveInstance) {
-        // Since this script runs in /js/, going up one level targets the build folder perfectly
-        const wasmPath = '../build/parser.wasm';
-        
-        self.postMessage({ type: 'LOG', logType: 'info', data: `[WASM] Attempting to fetch binary from relative path: ${wasmPath}` });
-
-        fetch(wasmPath)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status} - File not found at ${wasmPath}`);
-                }
-                const contentType = response.headers.get('content-type');
-                if (contentType && contentType.includes('text/html')) {
-                    throw new Error(`Server returned HTML instead of WebAssembly. The file is missing on the server.`);
-                }
-                return response.arrayBuffer();
-            })
-            .then(bytes => WebAssembly.instantiate(bytes, info))
-            .then(result => {
-                self.postMessage({ type: 'LOG', logType: 'success', data: '[WASM] Binary downloaded and compiled successfully.' });
-                receiveInstance(result.instance);
-            })
-            .catch(err => {
-                self.postMessage({ type: 'ERROR', command: 'init', error: err.message });
-                self.postMessage({ type: 'LOG', logType: 'error', data: `[WASM FATAL] ${err.message}` });
-            });
-
-        return {}; 
+    // Standard Emscripten hook to find the binary file
+    locateFile: function(path, prefix) {
+        if (path.endsWith('.wasm')) {
+            // Relative path from js/worker.js up to build/parser.wasm
+            return '../build/' + path;
+        }
+        return prefix + path;
     },
     onRuntimeInitialized: function() {
         self.postMessage({ type: 'READY' });
@@ -45,12 +23,13 @@ var Module = {
 self.Module = Module;
 
 try {
+    // Load the Emscripten JavaScript glue code
     importScripts('../build/parser.js'); 
 } catch (error) {
     self.postMessage({ 
         type: 'ERROR', 
         command: 'init', 
-        error: `Fatal import error. Details: ${error.message}` 
+        error: `Fatal import error. Could not load '../build/parser.js'. Details: ${error.message}` 
     });
 }
 
@@ -118,9 +97,17 @@ self.onmessage = function(event) {
             }
 
             default:
-                self.postMessage({ type: 'ERROR', command: command, error: 'Unknown command execution requested.' });
+                self.postMessage({ 
+                    type: 'ERROR', 
+                    command: command, 
+                    error: 'Unknown command execution requested.' 
+                });
         }
     } catch (error) {
-        self.postMessage({ type: 'ERROR', command: command, error: error.message || 'Unknown execution error within worker.' });
+        self.postMessage({ 
+            type: 'ERROR', 
+            command: command, 
+            error: error.message || 'Unknown execution error within worker.' 
+        });
     }
 };
