@@ -1,111 +1,88 @@
 // js/main.js
-console.log("✅ main.js loaded");
+console.log("🚀 main.js initialized");
 
-// Worker setup
-let worker;
-try {
-    worker = new Worker('js/worker.js');
-    console.log("✅ Worker created");
-} catch (e) {
-    console.error("Worker failed:", e);
-}
-
-// UI Elements
 const dropZone = document.getElementById('dropZone');
-const fileInput = document.getElementById('apk-upload');
-const terminal = document.getElementById('terminal-log');
-const assetList = document.getElementById('asset-list');
-const assetCountEl = document.getElementById('asset-count');
+const fileInput = document.getElementById('fileInput');
+const logs = document.getElementById('logs');
+const assetList = document.getElementById('assetList');
+const countEl = document.getElementById('count');
 
+let worker = null;
 let assetCount = 0;
-const uniqueAssets = new Set();
+const seen = new Set();
 
-function addLog(message, type = 'normal') {
+function log(msg, type = 'info') {
     const entry = document.createElement('div');
-    entry.className = type === 'success' ? 'text-green-400' : 
-                      type === 'error' ? 'text-red-400' : 'text-gray-300';
-    entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-    terminal.appendChild(entry);
-    terminal.scrollTop = terminal.scrollHeight;
+    entry.className = type === 'success' ? 'text-emerald-400' : type === 'error' ? 'text-red-400' : '';
+    entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logs.appendChild(entry);
+    logs.scrollTop = logs.scrollHeight;
 }
 
-// --- File Handling ---
-function processFile(file) {
+// Initialize Worker
+function initWorker() {
+    try {
+        worker = new Worker('js/worker.js');
+        log('Worker started successfully', 'success');
+
+        worker.onmessage = (e) => {
+            const { type, data, logType } = e.data;
+
+            if (type === 'LOG') {
+                log(data, logType);
+            } else if (type === 'PROGRESS') {
+                // Progress bar can be added later
+            } else if (type === 'ASSET_FOUND_META') {
+                if (seen.has(data.name)) return;
+                seen.add(data.name);
+                assetCount++;
+                countEl.textContent = assetCount;
+
+                const item = document.createElement('li');
+                item.className = "bg-zinc-800 p-3 rounded-xl text-sm";
+                item.innerHTML = `<span class="text-amber-300">${data.name}</span><br><span class="text-xs text-zinc-500">0x${data.offset?.toString(16) || 'N/A'}</span>`;
+                assetList.appendChild(item);
+            }
+        };
+
+        worker.onerror = (err) => log(`Worker error: ${err.message}`, 'error');
+    } catch (err) {
+        log(`Failed to create worker: ${err.message}`, 'error');
+    }
+}
+
+// File Processing
+function handleFile(file) {
     if (!file) return;
 
-    // Reset UI
-    terminal.innerHTML = '';
+    logs.innerHTML = '';
     assetList.innerHTML = '';
-    uniqueAssets.clear();
+    seen.clear();
     assetCount = 0;
-    assetCountEl.textContent = '0';
+    countEl.textContent = '0';
 
-    addLog(`File selected: ${file.name}`, 'success');
-    addLog(`Size: ${(file.size / 1024 / 1024).toFixed(2)} MB`, 'success');
+    log(`Selected: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`, 'success');
 
-    // Send to worker
-    worker.postMessage({ 
-        type: 'PROCESS_FILE', 
-        file: file 
-    });
+    if (worker) {
+        worker.postMessage({ type: 'PROCESS_FILE', file: file });
+    } else {
+        log('Worker not ready', 'error');
+    }
 }
 
-// Click on drop zone → open file dialog
-dropZone.addEventListener('click', () => {
-    fileInput.click();
-});
-
+// Event Listeners
+dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) processFile(file);
+    if (e.target.files[0]) handleFile(e.target.files[0]);
 });
 
-// Drag & Drop support
-dropZone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropZone.classList.add('dragover');
-});
-
-dropZone.addEventListener('dragleave', () => {
-    dropZone.classList.remove('dragover');
-});
-
-dropZone.addEventListener('drop', (e) => {
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file) processFile(file);
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
 });
 
-// Worker Messages
-worker.onmessage = function(e) {
-    const { type, data, logType } = e.data;
-
-    if (type === 'LOG') {
-        addLog(data, logType);
-    } 
-    else if (type === 'PROGRESS') {
-        // You can add a progress bar later
-    } 
-    else if (type === 'ASSET_FOUND_META') {
-        if (uniqueAssets.has(data.name)) return;
-        uniqueAssets.add(data.name);
-        assetCount++;
-        assetCountEl.textContent = assetCount;
-
-        const li = document.createElement('li');
-        li.className = "bg-gray-800 p-3 rounded-lg";
-        li.innerHTML = `
-            <div class="font-medium">${data.name}</div>
-            <div class="text-xs text-gray-500">Offset: 0x${(data.offset||0).toString(16).toUpperCase()}</div>
-        `;
-        assetList.appendChild(li);
-    }
-};
-
-worker.onerror = function(err) {
-    addLog(`Worker Error: ${err.message}`, 'error');
-    console.error(err);
-};
-
-addLog("✅ Page initialized. Ready to load APK.", "success");
+initWorker();
+log("✅ Ready. Drop an APK to begin.", "success");
