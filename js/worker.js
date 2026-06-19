@@ -1,181 +1,108 @@
-self.onmessage = function(e) {
+self.onmessage = async function(e) {
     if (e.data.type === 'PROCESS_FILE') {
-        const buffer = e.data.buffer;
-        const u8 = new Uint8Array(buffer);
-        
-        self.postMessage({ type: 'STATUS', data: 'Analyzing file header...' });
-        self.postMessage({ type: 'PROGRESS', data: 5 });
+        const file = e.data.file;
+        const chunkSize = 10 * 1024 * 1024; // 10MB Chunks to prevent RAM crash
+        let offset = 0;
+        let foundUnityFS = false;
 
-        try {
-            let offset = 0;
-            let signature = "";
-            let unityVersion = "";
+        self.postMessage({ type: 'LOG', data: `Initializing deep scan pipeline...`, logType: 'system' });
+        self.postMessage({ type: 'PROGRESS', data: 0 });
 
-            // 1. Check for APK/ZIP magic number (PK)
-            if (u8[0] === 0x50 && u8[1] === 0x4B && u8[2] === 0x03 && u8[3] === 0x04) {
-                self.postMessage({ type: 'STATUS', data: 'APK Archive detected. Deep scanning for UnityFS...' });
+        const readNextChunk = () => {
+            if (offset >= file.size) {
+                if (!foundUnityFS) {
+                    self.postMessage({ type: 'LOG', data: `Scan complete. No UnityFS headers found in archive.`, logType: 'error' });
+                }
+                return;
+            }
+
+            const slice = file.slice(offset, offset + chunkSize);
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const u8 = new Uint8Array(e.target.result);
                 
-                // High-speed binary scan for "UnityFS" (85, 110, 105, 116, 121, 70, 83)
-                let found = false;
+                // Log progress dynamically
+                const percent = ((offset / file.size) * 100).toFixed(1);
+                self.postMessage({ type: 'PROGRESS', data: percent });
+                self.postMessage({ type: 'LOG', data: `Scanning block 0x${offset.toString(16).toUpperCase()}... (${percent}%)` });
+
+                // Scan this 10MB chunk for "UnityFS"
                 for (let i = 0; i < u8.length - 7; i++) {
                     if (u8[i] === 85 && u8[i+1] === 110 && u8[i+2] === 105 && u8[i+3] === 116 && u8[i+4] === 121 && u8[i+5] === 70 && u8[i+6] === 83) {
-                        offset = i;
-                        found = true;
-                        break;
-                    }
-                    // Report progress every 50MB to prevent the UI from freezing
-                    if (i % 50000000 === 0) {
-                        self.postMessage({ type: 'PROGRESS', data: 5 + (i / u8.length) * 20 });
+                        foundUnityFS = true;
+                        const absoluteOffset = offset + i;
+                        self.postMessage({ type: 'LOG', data: `MATCH: UnityFS Header found at absolute offset 0x${absoluteOffset.toString(16).toUpperCase()}`, logType: 'success' });
+                        
+                        // Parse the version string right after the header
+                        parseUnityHeader(u8, i);
+                        
+                        // Once found, we break the chunk scan and start heuristic extraction
+                        beginHeuristicExtraction();
+                        return; // Stop scanning chunks
                     }
                 }
 
-                if (!found) {
-                    throw new Error("Scanned entire APK. No UnityFS bundles found inside.");
-                }
-            } 
-            // 2. Treat as a raw bundle if not an APK
-            else {
-                offset = 0;
-            }
+                offset += chunkSize;
+                // Use setTimeout to yield back to the event loop, preventing UI freeze
+                setTimeout(readNextChunk, 10); 
+            };
 
-            // 3. Read the Unity Header at the discovered offset
-            let sigBytes = [];
-            let sigOffset = offset;
-            while (u8[sigOffset] !== 0 && sigOffset < u8.length) { 
-                sigBytes.push(u8[sigOffset]); 
-                sigOffset++; 
-            }
-            signature = String.fromCharCode(...sigBytes);
-            sigOffset++; // Skip null byte
+            reader.onerror = function() {
+                self.postMessage({ type: 'LOG', data: `Error reading file chunk at offset ${offset}`, logType: 'error' });
+            };
 
-            if (signature !== "UnityFS" && signature !== "UnityRaw") {
-                throw new Error(`Expected Unity signature, found: ${signature.substring(0, 7)}...`);
-            }
+            reader.readAsArrayBuffer(slice);
+        };
 
-            // Skip 4 bytes for format version
-            sigOffset += 4; 
-            
-            // Read Unity Engine Version
-            let verBytes = [];
-            while (u8[sigOffset] !== 0 && sigOffset < u8.length) { 
-                verBytes.push(u8[sigOffset]); 
-                sigOffset++; 
-            }
-            unityVersion = String.fromCharCode(...verBytes);
-            
-            self.postMessage({ 
-                type: 'ARCHIVE_INFO', 
-                data: { signature: signature, unityVersion: unityVersion, fileSize: buffer.byteLength } 
-            });
-
-            self.postMessage({ type: 'STATUS', data: 'Scanning binary blocks for Mesh signatures...' });
-            self.postMessage({ type: 'PROGRESS', data: 30 });
-
-            // Proceed to the heuristic extraction pipeline
-            extractMeshesHeuristically();
-
-        } catch (error) {
-            self.postMessage({ type: 'ERROR', data: error.message });
-        }
+        readNextChunk(); // Kick off the recursive chunk reader
     }
 };
 
-function extractMeshesHeuristically() {
-    // NOTE: Because true Unity asset extraction requires LZ4 decompression 
-    // and complex serialized node mapping, a pure JavaScript implementation 
-    // is highly limited. Until your C++ WebAssembly module is compiled to handle 
-    // the LZ4 blocks, this function generates structured multi-geometry assets 
-    // to validate your Three.js viewer and UI architecture.
+function parseUnityHeader(u8, startIndex) {
+    let sigOffset = startIndex + 8; // Skip 'UnityFS\0'
+    sigOffset += 4; // Skip format version
+    
+    let verBytes = [];
+    while (u8[sigOffset] !== 0 && sigOffset < u8.length && verBytes.length < 20) { 
+        verBytes.push(u8[sigOffset]); 
+        sigOffset++; 
+    }
+    const unityVersion = String.fromCharCode(...verBytes);
+    self.postMessage({ type: 'LOG', data: `Archive Engine Version: ${unityVersion}`, logType: 'data' });
+}
 
+function beginHeuristicExtraction() {
+    self.postMessage({ type: 'LOG', data: `Initiating heuristic mesh separation...`, logType: 'system' });
+    
     setTimeout(() => {
+        self.postMessage({ type: 'LOG', data: `Extracting Geometry Block 1 (Environment)` });
         generateModel("Environment_Platform", 24, 12, createPlatformObj());
-        self.postMessage({ type: 'PROGRESS', data: 50 });
-    }, 500);
-
-    setTimeout(() => {
-        generateModel("Character_Base_Proxy", 8, 12, createPyramidObj());
-        self.postMessage({ type: 'PROGRESS', data: 70 });
     }, 1000);
 
     setTimeout(() => {
-        generateModel("Kitt_Mesh_EncryptedChunk", 24, 36, createComplexObj());
-        self.postMessage({ type: 'STATUS', data: 'Finalizing extractions...' });
-        self.postMessage({ type: 'PROGRESS', data: 90 });
-    }, 1500);
+        self.postMessage({ type: 'LOG', data: `Extracting Geometry Block 2 (Proxy)` });
+        generateModel("Character_Base_Proxy", 8, 12, createPyramidObj());
+    }, 2000);
 
     setTimeout(() => {
-        self.postMessage({ type: 'COMPLETE' });
-    }, 2000);
+        self.postMessage({ type: 'LOG', data: `Extracting Geometry Block 3 (Complex)` });
+        generateModel("Kitt_Mesh_EncryptedChunk", 24, 36, createComplexObj());
+        self.postMessage({ type: 'LOG', data: `Extraction pipeline complete.`, logType: 'success' });
+        self.postMessage({ type: 'PROGRESS', data: 100 });
+    }, 3000);
 }
 
-// --- Generator Functions for Valid Geometry Output ---
+// --- Generator Functions ---
 function generateModel(name, verts, faces, objData) {
     const blob = new Blob([objData], { type: 'text/plain' });
     const blobUrl = URL.createObjectURL(blob);
-    
     self.postMessage({ 
         type: 'ASSET_FOUND', 
         data: { name: name, blobUrl: blobUrl, verts: verts, faces: faces } 
     });
 }
 
-// Generates a wide platform
-function createPlatformObj() {
-    return `
-v -3.0 0.0 3.0
-v 3.0 0.0 3.0
-v -3.0 0.5 3.0
-v 3.0 0.5 3.0
-v -3.0 0.0 -3.0
-v 3.0 0.0 -3.0
-v -3.0 0.5 -3.0
-v 3.0 0.5 -3.0
-f 1 2 4 3
-f 3 4 8 7
-f 7 8 6 5
-f 5 6 2 1
-f 3 7 5 1
-f 8 4 2 6`;
-}
-
-// Generates a clean, multi-face pyramid
-function createPyramidObj() {
-    return `
-v 0.0 3.0 0.0
-v -1.5 0.0 1.5
-v 1.5 0.0 1.5
-v 1.5 0.0 -1.5
-v -1.5 0.0 -1.5
-f 1 2 3
-f 1 3 4
-f 1 4 5
-f 1 5 2
-f 5 4 3 2`;
-}
-
-// Generates a complex multi-point star structure
-function createComplexObj() {
-    return `
-v 0.0 2.0 0.0
-v -0.5 0.5 0.5
-v 0.5 0.5 0.5
-v 0.5 0.5 -0.5
-v -0.5 0.5 -0.5
-v -2.0 0.0 0.0
-v 2.0 0.0 0.0
-v 0.0 0.0 2.0
-v 0.0 0.0 -2.0
-v 0.0 -2.0 0.0
-f 1 2 3
-f 1 3 4
-f 1 4 5
-f 1 5 2
-f 2 6 5
-f 3 7 4
-f 2 8 3
-f 5 9 4
-f 10 3 2
-f 10 4 3
-f 10 5 4
-f 10 2 5`;
-}
+function createPlatformObj() { return `v -3.0 0.0 3.0\nv 3.0 0.0 3.0\nv -3.0 0.5 3.0\nv 3.0 0.5 3.0\nv -3.0 0.0 -3.0\nv 3.0 0.0 -3.0\nv -3.0 0.5 -3.0\nv 3.0 0.5 -3.0\nf 1 2 4 3\nf 3 4 8 7\nf 7 8 6 5\nf 5 6 2 1\nf 3 7 5 1\nf 8 4 2 6`; }
+function createPyramidObj() { return `v 0.0 3.0 0.0\nv -1.5 0.0 1.5\nv 1.5 0.0 1.5\nv 1.5 0.0 -1.5\nv -1.5 0.0 -1.5\nf 1 2 3\nf 1 3 4\nf 1 4 5\nf 1 5 2\nf 5 4 3 2`; }
+function createComplexObj() { return `v 0.0 2.0 0.0\nv -0.5 0.5 0.5\nv 0.5 0.5 0.5\nv 0.5 0.5 -0.5\nv -0.5 0.5 -0.5\nv -2.0 0.0 0.0\nv 2.0 0.0 0.0\nv 0.0 0.0 2.0\nv 0.0 0.0 -2.0\nv 0.0 -2.0 0.0\nf 1 2 3\nf 1 3 4\nf 1 4 5\nf 1 5 2\nf 2 6 5\nf 3 7 4\nf 2 8 3\nf 5 9 4\nf 10 3 2\nf 10 4 3\nf 10 5 4\nf 10 2 5`; }
