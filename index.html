@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Local Asset Extractor & Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Asset Extractor</title>
     <link rel="stylesheet" href="css/style.css">
     <script type="importmap">
         {
@@ -15,43 +15,55 @@
     </script>
 </head>
 <body>
-    <div class="container">
-        <div class="sidebar">
-            <h2>Asset Extractor</h2>
+    <div class="app-container">
+        <header class="top-bar">
             <div class="file-input-wrapper">
-                <label for="apk-upload" class="custom-file-upload">Select Unity Archive (.apk / .bundle)</label>
+                <label for="apk-upload" class="custom-file-upload">
+                    📁 Load APK / Bundle
+                </label>
                 <input id="apk-upload" type="file" accept=".apk,.bundle,.assets" />
             </div>
-            
-            <div id="status-panel">
-                <p>Status: <span id="status-text" class="highlight">Awaiting File...</span></p>
+            <div class="status-indicator">
+                <span id="status-text">Idle</span>
                 <progress id="progress-bar" value="0" max="100"></progress>
             </div>
+        </header>
 
-            <div id="archive-info" class="hidden">
-                <h3>Archive Data</h3>
-                <p>Signature: <span id="meta-sig">...</span></p>
-                <p>Version: <span id="meta-ver">...</span></p>
-                <p>Total Size: <span id="meta-size">...</span></p>
-                <p>Models Found: <span id="meta-count" class="highlight">0</span></p>
-            </div>
-
-            <div class="asset-list-container">
-                <h3>Extracted Meshes</h3>
-                <ul id="asset-list"></ul>
-            </div>
-        </div>
-
-        <div class="viewport">
+        <main class="viewport-container" id="viewport-container">
             <canvas id="viewer-canvas"></canvas>
             <div id="overlay-ui">
-                <div class="title">3D Preview</div>
                 <div id="model-stats" class="hidden">
-                    <span id="stat-verts">Verts: 0</span> | <span id="stat-faces">Faces: 0</span>
+                    <span id="stat-verts">V: 0</span> | <span id="stat-faces">F: 0</span>
                 </div>
             </div>
-        </div>
+        </main>
+
+        <footer class="bottom-panel">
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('logs')">Live Log</button>
+                <button class="tab-btn" onclick="switchTab('assets')">Assets (<span id="asset-count">0</span>)</button>
+            </div>
+            
+            <div id="tab-logs" class="tab-content active">
+                <div id="terminal-log">
+                    <div class="log-entry system">System ready. Select a file to begin deep scan.</div>
+                </div>
+            </div>
+
+            <div id="tab-assets" class="tab-content hidden">
+                <ul id="asset-list"></ul>
+            </div>
+        </footer>
     </div>
     <script type="module" src="js/main.js"></script>
+    <script>
+        // Simple tab switcher for mobile space management
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + tabName).classList.remove('hidden');
+            event.target.classList.add('active');
+        }
+    </script>
 </body>
 </html>
