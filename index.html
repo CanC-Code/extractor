@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local Asset Extractor & Viewer</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Three.js Core and Addons -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h2>Asset Extractor</h2>
+            <div class="file-input-wrapper">
+                <label for="apk-upload" class="custom-file-upload">
+                    Select Unity Asset Archive (.apk / .bundle)
+                </label>
+                <input id="apk-upload" type="file" accept=".apk,.bundle,.assets" />
+            </div>
+            
+            <div id="status-panel">
+                <p>Status: <span id="status-text">Waiting for file...</span></p>
+                <progress id="progress-bar" value="0" max="100"></progress>
+            </div>
+
+            <div class="asset-list-container">
+                <h3>Extracted Meshes</h3>
+                <ul id="asset-list">
+                    <!-- Extracted assets will populate here -->
+                </ul>
+            </div>
+        </div>
+
+        <div class="viewport">
+            <canvas id="viewer-canvas"></canvas>
+            <div id="overlay-ui">3D Preview</div>
+        </div>
+    </div>
+
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
