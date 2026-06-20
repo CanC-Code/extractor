@@ -1,18 +1,35 @@
 // js/worker.js
 let wasmModule = null;
 
-// Initialize WASM Parser
-importScripts('../build/parser.js'); 
-Module.onRuntimeInitialized = () => {
-    wasmModule = Module;
-    postMessage({ type: 'LOG', data: 'WASM Engine Initialized & Ready', logType: 'success' });
-};
-
+// Helper to push logs to the UI
 function log(msg, logType = 'info') {
     postMessage({ type: 'LOG', data: msg, logType });
 }
 
-// C++ callback when a node is extracted from a UnityFS bundle
+function updateStatus(state, message) {
+    postMessage({ type: 'STATUS', data: { state, message } });
+}
+
+// Global error catcher for the worker thread
+self.onerror = function(message, source, lineno, colno, error) {
+    log(`Worker Error: ${message} at line ${lineno}`, 'error');
+    updateStatus('error', 'WORKER ERROR');
+    return true; 
+};
+
+// Initialize WASM Parser safely
+try {
+    log("Attempting to load WASM engine...", "info");
+    importScripts('../build/parser.js'); 
+    Module.onRuntimeInitialized = () => {
+        wasmModule = Module;
+        log('WASM Engine Initialized & Ready', 'success');
+    };
+} catch (e) {
+    log(`Failed to load parser.js: ${e.message}. Is the path correct?`, 'error');
+    updateStatus('error', 'WASM LOAD FAIL');
+}
+
 self.onFileExtracted = function(fileName, bufferPtr, size, isSerializedContainer) {
     if (!wasmModule) return;
     
@@ -35,6 +52,7 @@ onmessage = async function(e) {
 
     if (type === 'PROCESS_FILE') {
         log(`Initiating byte-level scan for ${file.name}`);
+        updateStatus('working', 'SCANNING ARCHIVE...');
         
         try {
             const buffer = await file.arrayBuffer();
@@ -69,25 +87,38 @@ onmessage = async function(e) {
                 }
             }
             log(`Scan Complete. Found ${foundCount} valid files.`, "success");
+            updateStatus('idle', 'SYSTEM IDLE');
         } catch (err) {
             log(`File IO error: ${err.message}`, 'error');
+            updateStatus('error', 'SCAN FAILED');
         }
     } 
     else if (type === 'EXTRACT_ASSET') {
         const { offset, size, name } = assetMeta;
+        updateStatus('extracting', 'EXTRACTING BUFFER...');
         
         try {
             const chunk = file.slice(offset, offset + size);
             const arrayBuffer = await chunk.arrayBuffer();
 
-            if (isContainer && wasmModule) {
+            if (isContainer) {
+                if (!wasmModule) {
+                    log("Cannot parse bundle: WASM module is not loaded.", "error");
+                    updateStatus('error', 'WASM OFFLINE');
+                    return;
+                }
+                
                 log(`Sending ${name} payload to WASM Engine...`, 'info');
+                updateStatus('working', 'WASM UNPACKING...');
+                
                 const ptr = wasmModule._malloc(arrayBuffer.byteLength);
                 const heapArray = new Uint8Array(wasmModule.HEAPU8.buffer, ptr, arrayBuffer.byteLength);
                 heapArray.set(new Uint8Array(arrayBuffer));
                 
                 wasmModule.ccall('process_unity_archive', null, ['number', 'number'], [ptr, arrayBuffer.byteLength]);
                 wasmModule._free(ptr);
+                
+                updateStatus('idle', 'SYSTEM IDLE');
             } else {
                 postMessage({
                     type: 'ASSET_EXTRACTED',
@@ -96,6 +127,7 @@ onmessage = async function(e) {
             }
         } catch (err) {
             log(`Extraction failed for ${name}: ${err.message}`, 'error');
+            updateStatus('error', 'EXTRACTION FAILED');
         }
     }
 };
