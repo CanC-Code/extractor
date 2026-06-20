@@ -82,20 +82,22 @@ function handleAssetDiscovery(data) {
     assetCount++;
     scanProgress.textContent = `${assetCount} found`;
 
-    // Filter based on file extensions standard to Unity models
-    const isModel = data.name.match(/\.(mesh|fbx|obj|prefab|unity3d)$/i);
-    const listTarget = isModel ? modelList : assetList;
+    // FIXED: Unity packs models inside proprietary containers in the 'assets/bin/Data/' folder.
+    // This regex looks for '.assets', '.resource', '.bundle', or files starting with 'level'.
+    const isModelContainer = (data.name.match(/(\.(assets|resource|bundle|unity3d)|level\d+)$/i) !== null) && data.name.includes('assets/bin/Data/');
+    
+    const listTarget = isModelContainer ? modelList : assetList;
 
     const item = document.createElement('li');
     item.className = "p-2 border-b border-zinc-800 text-[10px] flex justify-between items-center hover:bg-zinc-800 transition-colors rounded";
     
     item.innerHTML = `
         <div class="flex flex-col truncate pr-2">
-            <span class="${isModel ? 'text-emerald-300' : 'text-amber-300'} font-semibold truncate" title="${data.name}">${data.name}</span>
-            <span class="text-zinc-500">Offset: 0x${(data.offset || 0).toString(16).toUpperCase()} | Size: ${data.size}B</span>
+            <span class="${isModelContainer ? 'text-emerald-300' : 'text-amber-300'} font-semibold truncate" title="${data.name}">${data.name}</span>
+            <span class="text-zinc-500">Offset: 0x${(data.offset || 0).toString(16).toUpperCase()} | Size: ${(data.size / 1024).toFixed(1)} KB</span>
         </div>
-        <button class="px-3 py-1.5 ${isModel ? 'bg-emerald-700 hover:bg-emerald-600' : 'bg-zinc-700 hover:bg-blue-600'} rounded font-bold transition-colors shadow-sm whitespace-nowrap">
-            ${isModel ? 'PREVIEW' : 'EXTRACT'}
+        <button class="px-3 py-1.5 ${isModelContainer ? 'bg-emerald-700 hover:bg-emerald-600' : 'bg-zinc-700 hover:bg-blue-600'} rounded font-bold transition-colors shadow-sm whitespace-nowrap">
+            ${isModelContainer ? 'PARSE BUNDLE' : 'EXTRACT'}
         </button>
     `;
 
@@ -107,7 +109,8 @@ function handleAssetDiscovery(data) {
         worker.postMessage({ 
             type: 'EXTRACT_ASSET', 
             assetMeta: data,
-            file: currentFile 
+            file: currentFile,
+            isContainer: isModelContainer
         });
     };
 
@@ -115,19 +118,21 @@ function handleAssetDiscovery(data) {
 }
 
 function handleExtractedAsset(data) {
-    const { name, buffer, isModel } = data;
+    const { name, buffer, isContainer } = data;
     log(`Extracted ${name} (${buffer.byteLength} bytes)`, 'success');
     statusBadge.textContent = 'SYSTEM IDLE';
     statusBadge.className = "bg-zinc-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-zinc-700 uppercase tracking-widest text-zinc-400";
 
-    if (isModel) {
+    if (isContainer) {
+        // TODO: Pass this buffer into your WASM 'parser.js' functions 
+        // (e.g. _deinterleave_mesh) to pull out the geometry array, then render.
         renderPlaceholderModel(name); 
     } else {
         const blob = new Blob([buffer]);
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = name.split('/').pop(); // Save just the filename, not the path
+        a.download = name.split('/').pop();
         a.click();
         URL.revokeObjectURL(url);
     }
