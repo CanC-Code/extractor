@@ -46,8 +46,8 @@ jobs:
           
           git commit -m "Auto-compile WASM artifacts" || echo "No changes to commit"
           
-          # Fetch and rebase against the latest remote changes to prevent push rejections
-          git pull --rebase origin main
+          # Use --autostash to temporarily hide unstaged files (like build.log) during the rebase
+          git pull --rebase --autostash origin main
           
           # Push the updated local HEAD explicitly back to the remote main branch
           git push origin HEAD:main
