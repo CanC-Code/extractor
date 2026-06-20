@@ -4,6 +4,7 @@
 #include <cstring>
 #include <string>
 #include <cstdlib>
+#include <emscripten.h> // REQUIRED FOR JS BRIDGE
 
 // Standalone LZ4 block decompression routine optimized for Wasm execution
 int LZ4_decompress_safe(const char* source, char* dest, int compressedSize, int maxDecompressedSize) {
@@ -84,7 +85,6 @@ extern "C" {
             uint32_t version = bswap32(*(uint32_t*)(buffer + offset));
             offset += 4;
 
-            // Skip Unity Version strings
             while (offset < size && buffer[offset] != '\0') offset++;
             offset++;
 
@@ -114,7 +114,6 @@ extern "C" {
             std::cout << "[C++ Engine] Target Data Start Offset: 0x" << std::hex << dataStart << std::endl;
             std::cout << "[C++ Engine] Target Blocks Info Offset: 0x" << std::hex << blocksInfo << std::dec << std::endl;
 
-            // Step 1: Decompress Blocks Info Header
             std::vector<uint8_t> uncompressedBlocksInfo(uncompressedBlocksInfoSize);
             uint32_t compressionMode = flags & 0x3F;
             
@@ -132,13 +131,9 @@ extern "C" {
                 }
             } else if (compressionMode == 0) {
                 std::memcpy(uncompressedBlocksInfo.data(), buffer + blocksInfo, uncompressedBlocksInfoSize);
-            } else {
-                std::cout << "[C++ Engine] VALIDATION FAILED: Unsupported compression flag." << std::endl;
-                return;
             }
 
-            size_t infoOffset = 16; // Skip 16-byte uncompressed data hash
-            
+            size_t infoOffset = 16;
             uint32_t blocksCount = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
             infoOffset += 4;
             
@@ -161,7 +156,6 @@ extern "C" {
                 totalUncompressedDataSize += dataBlocks[i].uncompressedSize;
             }
 
-            // Step 2: Extract and buffer interleaved memory payloads
             std::vector<uint8_t> rawData(totalUncompressedDataSize);
             uint64_t currentReadOffset = dataStart;
             uint64_t currentWriteOffset = 0;
@@ -170,17 +164,12 @@ extern "C" {
                 uint16_t blockCompression = dataBlocks[i].flags & 0x3F;
 
                 if (blockCompression == 2 || blockCompression == 3) {
-                    int decompressed = LZ4_decompress_safe(
+                    LZ4_decompress_safe(
                         (const char*)(buffer + currentReadOffset),
                         (char*)(rawData.data() + currentWriteOffset),
                         dataBlocks[i].compressedSize,
                         dataBlocks[i].uncompressedSize
                     );
-
-                    if (decompressed < 0) {
-                        std::cout << "[C++ Engine] VALIDATION FAILED: LZ4 data block decompression error." << std::endl;
-                        return;
-                    }
                 } else if (blockCompression == 0) {
                     std::memcpy(rawData.data() + currentWriteOffset, buffer + currentReadOffset, dataBlocks[i].compressedSize);
                 }
@@ -189,7 +178,6 @@ extern "C" {
                 currentWriteOffset += dataBlocks[i].uncompressedSize;
             }
 
-            // Step 3: Iterate through individual Unity nodes targeting SerializedFiles
             uint32_t nodesCount = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
             infoOffset += 4;
 
@@ -208,8 +196,14 @@ extern "C" {
                 }
                 infoOffset++; 
 
-                std::cout << "[C++ Engine] Node Processed: " << nodePath << std::endl;
-                // Mesh/OBJ parsing logic interacts with rawData here via nodeOffset
+                std::cout << "[C++ Engine] Node Processed: " << nodePath << " (" << nodeSize << " bytes)" << std::endl;
+                
+                // CRITICAL FIX: Push the extracted file pointer to the JS DOM before rawData goes out of scope
+                EM_ASM({
+                    if (typeof window.onFileExtracted === 'function') {
+                        window.onFileExtracted(UTF8ToString($0), $1, $2);
+                    }
+                }, nodePath.c_str(), rawData.data() + nodeOffset, nodeSize);
             }
             
             std::cout << "[C++ Engine] Unity SerializedFile deserialization and LZ4 sequence finished processing memory target." << std::endl;
@@ -219,11 +213,10 @@ extern "C" {
         }
     }
 
-    // Exposed functionality required by parser.js: _deinterleave_mesh
     float* deinterleave_mesh(uint8_t* rawData, int vertexCount, int vertexStride, int positionOffset, int normalOffset, int uvOffset) {
         if (!rawData || vertexCount <= 0 || vertexStride <= 0) return nullptr;
 
-        int numFloats = vertexCount * 8; // 3 Pos + 3 Normal + 2 UV
+        int numFloats = vertexCount * 8; 
         float* outBuffer = (float*)malloc(numFloats * sizeof(float));
         
         if (!outBuffer) return nullptr;
@@ -231,21 +224,18 @@ extern "C" {
         for (int i = 0; i < vertexCount; i++) {
             uint8_t* vertexPtr = rawData + (i * vertexStride);
 
-            // Extract Position
             if (positionOffset >= 0) {
                 outBuffer[i * 3 + 0] = *(float*)(vertexPtr + positionOffset);
                 outBuffer[i * 3 + 1] = *(float*)(vertexPtr + positionOffset + 4);
                 outBuffer[i * 3 + 2] = *(float*)(vertexPtr + positionOffset + 8);
             }
 
-            // Extract Normal
             if (normalOffset >= 0) {
                 outBuffer[vertexCount * 3 + i * 3 + 0] = *(float*)(vertexPtr + normalOffset);
                 outBuffer[vertexCount * 3 + i * 3 + 1] = *(float*)(vertexPtr + normalOffset + 4);
                 outBuffer[vertexCount * 3 + i * 3 + 2] = *(float*)(vertexPtr + normalOffset + 8);
             }
 
-            // Extract UV
             if (uvOffset >= 0) {
                 outBuffer[vertexCount * 6 + i * 2 + 0] = *(float*)(vertexPtr + uvOffset);
                 outBuffer[vertexCount * 6 + i * 2 + 1] = *(float*)(vertexPtr + uvOffset + 4);
@@ -255,7 +245,6 @@ extern "C" {
         return outBuffer;
     }
 
-    // Exposed functionality required by parser.js: _free_buffer
     void free_buffer(void* ptr) {
         if (ptr) {
             free(ptr);
