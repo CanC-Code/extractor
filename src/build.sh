@@ -10,6 +10,7 @@ emcc asset_parser.cpp \
     -s WASM=1 \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s INITIAL_MEMORY=256MB \
+    -s MAXIMUM_MEMORY=4294967296 \
     -s MODULARIZE=1 \
     -s EXPORT_NAME="createUnityParser" \
     -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","UTF8ToString","writeArrayToMemory"]' \
