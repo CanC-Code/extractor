@@ -8,13 +8,13 @@
 extern "C" {
 
 EMSCRIPTEN_KEEPALIVE
-char* process_unity_archive(const uint8_t* buffer, int bufferSize) {
+char* process_unity_archive(const uint8_t* buffer, size_t bufferSize) {
     if (!buffer || bufferSize <= 0) {
         printf("[WASM ERROR] Invalid buffer or size.\n");
         return nullptr;
     }
 
-    printf("[WASM] Processing unity archive with %d bytes...\n", bufferSize);
+    printf("[WASM] Processing unity archive with %zu bytes...\n", bufferSize);
 
     // Fixed-size buffer prevents integer overflow when scanning massive files.
     char* result = (char*)malloc(256); 
@@ -23,20 +23,20 @@ char* process_unity_archive(const uint8_t* buffer, int bufferSize) {
         return nullptr;
     }
 
-    snprintf(result, 256, "PROCESSED_%d_BYTES_SUCCESSFULLY", bufferSize);
+    snprintf(result, 256, "PROCESSED_%zu_BYTES_SUCCESSFULLY", bufferSize);
     
     printf("[WASM] Unity archive processing complete.\n");
     return result;
 }
 
 EMSCRIPTEN_KEEPALIVE
-char* deinterleave_mesh(const uint8_t* buffer, int numVertices) {
+char* deinterleave_mesh(const uint8_t* buffer, size_t numVertices) {
     if (!buffer || numVertices <= 0) {
         printf("[WASM ERROR] Invalid buffer or vertex count.\n");
         return nullptr;
     }
 
-    printf("[WASM] Deinterleaving mesh with %d vertices...\n", numVertices);
+    printf("[WASM] Deinterleaving mesh with %zu vertices...\n", numVertices);
 
     char* result = (char*)malloc(numVertices * 128); 
     if (!result) {
@@ -44,7 +44,7 @@ char* deinterleave_mesh(const uint8_t* buffer, int numVertices) {
         return nullptr;
     }
 
-    snprintf(result, numVertices * 128, "DEINTERLEAVED_%d_VERTICES", numVertices);
+    snprintf(result, numVertices * 128, "DEINTERLEAVED_%zu_VERTICES", numVertices);
     
     printf("[WASM] Deinterleaving complete.\n");
     return result;
