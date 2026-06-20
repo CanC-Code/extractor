@@ -28,49 +28,105 @@
         </div>
 
         <div id="Models" class="tab-content">
-            <div class="placeholder-text">Extracted 3D meshes will populate here.</div>
+            <div class="placeholder-text" id="models-placeholder">Extracted 3D meshes will populate here.</div>
             <div id="model-container"></div>
         </div>
 
         <div id="Files" class="tab-content">
-            <div class="placeholder-text">Parsed archive hierarchy will populate here.</div>
+            <div class="placeholder-text" id="files-placeholder">Parsed archive hierarchy will populate here.</div>
             <div id="file-tree"></div>
         </div>
     </div>
 
     <script>
-        // Tab switching logic for the UI
         function openTab(evt, tabName) {
             var i, tabcontent, tablinks;
-            
-            // Hide all tab content
             tabcontent = document.getElementsByClassName("tab-content");
             for (i = 0; i < tabcontent.length; i++) {
                 tabcontent[i].style.display = "none";
                 tabcontent[i].classList.remove("active-content");
             }
-            
-            // Remove active class from all buttons
             tablinks = document.getElementsByClassName("tab-link");
             for (i = 0; i < tablinks.length; i++) {
                 tablinks[i].className = tablinks[i].className.replace(" active", "");
             }
-            
-            // Show the target tab and set it to active
             document.getElementById(tabName).style.display = "block";
             document.getElementById(tabName).classList.add("active-content");
             evt.currentTarget.className += " active";
         }
+
+        // Global Dictionary to hold extracted files in JS Memory
+        window.extractedFiles = {};
+
+        // Bridge function called by C++ EM_ASM block
+        window.onFileExtracted = function(fileName, ptr, size) {
+            // Slice creates a deep copy so we safely retain it when C++ rawData is freed
+            const fileData = new Uint8Array(Module.HEAPU8.buffer, ptr, size).slice();
+            window.extractedFiles[fileName] = fileData;
+            
+            updateFilesTab(fileName, fileData);
+            
+            // Auto-route target assets to the Model UI
+            if (fileName.includes('.assets') || fileName.includes('.obj') || fileName.includes('.mesh')) {
+                updateModelsTab(fileName, fileData);
+            }
+        };
+
+        function updateFilesTab(fileName, fileData) {
+            document.getElementById('files-placeholder').style.display = 'none';
+            const container = document.getElementById('file-tree');
+
+            const item = document.createElement('div');
+            item.className = 'file-item';
+            
+            const mbSize = (fileData.length / 1024 / 1024).toFixed(2);
+            item.innerHTML = `<span class="file-name">📄 ${fileName}</span><span class="file-size">${mbSize} MB</span>`;
+            
+            const btn = document.createElement('button');
+            btn.className = 'download-btn';
+            btn.innerText = 'Download';
+            btn.onclick = () => downloadBlob(fileData, fileName);
+            
+            item.appendChild(btn);
+            container.appendChild(item);
+        }
+
+        function updateModelsTab(fileName, fileData) {
+            document.getElementById('models-placeholder').style.display = 'none';
+            const container = document.getElementById('model-container');
+
+            const item = document.createElement('div');
+            item.className = 'file-item model-item';
+            item.innerHTML = `<span class="file-name">🧊 ${fileName}</span>`;
+            
+            const btn = document.createElement('button');
+            btn.className = 'action-btn';
+            btn.innerText = 'Init Mesh Deinterleave';
+            btn.onclick = () => {
+                alert(`File size: ${fileData.length} bytes.\n\nReady to pass layout offsets to C++ _deinterleave_mesh via WASM HEAP.`);
+            };
+            
+            item.appendChild(btn);
+            container.appendChild(item);
+        }
+
+        function downloadBlob(data, name) {
+            const blob = new Blob([data], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = name;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
     </script>
 
     <script>
-        // Initialize Emscripten Module configuration before script loads
         var Module = {
             preRun: [],
             postRun: [],
             print: (function() {
                 return function(text) {
-                    if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
                     console.log(text);
                     const logConsole = document.getElementById('log-output');
                     if (logConsole) {
@@ -80,7 +136,6 @@
                 };
             })(),
             printErr: function(text) {
-                if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
                 console.error(text);
                 const logConsole = document.getElementById('log-output');
                 if (logConsole) {
@@ -110,37 +165,30 @@
             fileLabel.innerText = file.name;
             statusDiv.innerText = "Reading file into memory...";
             statusDiv.style.color = "#ff9800";
-            logConsole.innerHTML = ""; // Clear previous logs
+            logConsole.innerHTML = ""; 
+            
+            // Clear UI state for new parse
+            document.getElementById('file-tree').innerHTML = '';
+            document.getElementById('model-container').innerHTML = '';
+            document.getElementById('files-placeholder').style.display = 'block';
+            document.getElementById('models-placeholder').style.display = 'block';
+            window.extractedFiles = {};
 
             const reader = new FileReader();
-            
             reader.onload = function(event) {
                 statusDiv.innerText = "Processing via C++ WASM Engine...";
-                
                 try {
                     const arrayBuffer = event.target.result;
                     const uint8Array = new Uint8Array(arrayBuffer);
 
-                    if (!Module._process_unity_archive) {
-                        throw new Error("WASM module not initialized or _process_unity_archive missing.");
-                    }
-
-                    // Allocate memory inside WASM heap
                     const ptr = Module._malloc(uint8Array.length);
-                    if (!ptr) {
-                        throw new Error("Failed to allocate memory in WASM heap.");
-                    }
-
-                    // Copy file data into WASM memory
                     Module.HEAPU8.set(uint8Array, ptr);
 
-                    // Execute C++ logic
                     Module._process_unity_archive(ptr, uint8Array.length);
 
-                    // Free allocated memory
                     Module._free(ptr);
                     
-                    statusDiv.innerText = "Processing Complete.";
+                    statusDiv.innerText = "Processing Complete. View extracted data in tabs.";
                     statusDiv.style.color = "#4CAF50";
                 } catch (err) {
                     statusDiv.innerText = "Error during processing.";
@@ -148,12 +196,6 @@
                     Module.printErr(err.message);
                 }
             };
-
-            reader.onerror = function() {
-                statusDiv.innerText = "Failed to read file.";
-                statusDiv.style.color = "#f44336";
-            };
-
             reader.readAsArrayBuffer(file);
         });
     </script>
