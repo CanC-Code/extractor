@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <cstdlib>
 
 // Standalone LZ4 block decompression routine optimized for Wasm execution
 int LZ4_decompress_safe(const char* source, char* dest, int compressedSize, int maxDecompressedSize) {
@@ -215,6 +216,49 @@ extern "C" {
 
         } else {
             std::cout << "[C++ Engine] VALIDATION FAILED: Invalid signature at allocated pointer." << std::endl;
+        }
+    }
+
+    // Exposed functionality required by parser.js: _deinterleave_mesh
+    float* deinterleave_mesh(uint8_t* rawData, int vertexCount, int vertexStride, int positionOffset, int normalOffset, int uvOffset) {
+        if (!rawData || vertexCount <= 0 || vertexStride <= 0) return nullptr;
+
+        int numFloats = vertexCount * 8; // 3 Pos + 3 Normal + 2 UV
+        float* outBuffer = (float*)malloc(numFloats * sizeof(float));
+        
+        if (!outBuffer) return nullptr;
+
+        for (int i = 0; i < vertexCount; i++) {
+            uint8_t* vertexPtr = rawData + (i * vertexStride);
+
+            // Extract Position
+            if (positionOffset >= 0) {
+                outBuffer[i * 3 + 0] = *(float*)(vertexPtr + positionOffset);
+                outBuffer[i * 3 + 1] = *(float*)(vertexPtr + positionOffset + 4);
+                outBuffer[i * 3 + 2] = *(float*)(vertexPtr + positionOffset + 8);
+            }
+
+            // Extract Normal
+            if (normalOffset >= 0) {
+                outBuffer[vertexCount * 3 + i * 3 + 0] = *(float*)(vertexPtr + normalOffset);
+                outBuffer[vertexCount * 3 + i * 3 + 1] = *(float*)(vertexPtr + normalOffset + 4);
+                outBuffer[vertexCount * 3 + i * 3 + 2] = *(float*)(vertexPtr + normalOffset + 8);
+            }
+
+            // Extract UV
+            if (uvOffset >= 0) {
+                outBuffer[vertexCount * 6 + i * 2 + 0] = *(float*)(vertexPtr + uvOffset);
+                outBuffer[vertexCount * 6 + i * 2 + 1] = *(float*)(vertexPtr + uvOffset + 4);
+            }
+        }
+
+        return outBuffer;
+    }
+
+    // Exposed functionality required by parser.js: _free_buffer
+    void free_buffer(void* ptr) {
+        if (ptr) {
+            free(ptr);
         }
     }
 }
