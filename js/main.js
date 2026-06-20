@@ -39,8 +39,8 @@ const logContainer = document.getElementById('tab-logs');
 const statusText = document.getElementById('status-text');
 const fileInput = document.getElementById('apk-upload');
 
-// Lock the file input until WASM is ready
-fileInput.disabled = true;
+// UI is unlocked by default so you can pick the file immediately
+fileInput.disabled = false;
 
 function addLog(msg, type = 'normal') {
     const div = document.createElement('div');
@@ -55,7 +55,7 @@ function addLog(msg, type = 'normal') {
 let worker;
 try {
     worker = new Worker('js/worker.js');
-    addLog('Background thread spawned. Waiting for WASM Engine...', 'system');
+    addLog('Background thread spawned. Connecting to WASM Engine...', 'system');
 } catch (e) {
     addLog(`Failed to spawn worker: ${e.message}`, 'error');
 }
@@ -70,8 +70,6 @@ worker.onmessage = function(e) {
         addLog(data, logType || 'normal');
         statusText.innerText = data;
     } else if (type === 'WASM_READY') {
-        // Unlock the UI!
-        fileInput.disabled = false;
         document.querySelector('.custom-file-upload').style.backgroundColor = '#00e676';
     } else if (type === 'PROGRESS') {
         document.getElementById('progress-bar').value = data;
