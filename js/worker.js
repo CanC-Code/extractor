@@ -1,7 +1,6 @@
 // js/worker.js
 let wasmModule = null;
 
-// Helper to push logs to the UI
 function log(msg, logType = 'info') {
     postMessage({ type: 'LOG', data: msg, logType });
 }
@@ -17,16 +16,53 @@ self.onerror = function(message, source, lineno, colno, error) {
     return true; 
 };
 
-// Initialize WASM Parser safely
+// Configure Emscripten Module BEFORE loading the script
+self.Module = {
+    // Explicitly tell Emscripten where to find the .wasm file
+    locateFile: function(path, scriptDirectory) {
+        if (path.endsWith('.wasm')) {
+            return '../build/' + path;
+        }
+        return scriptDirectory + path;
+    },
+    onRuntimeInitialized: function() {
+        wasmModule = self.Module;
+        log('WASM Engine Initialized & Ready', 'success');
+        updateStatus('idle', 'SYSTEM IDLE');
+    }
+};
+
+// Safely initialize WASM Parser with path fallbacks
 try {
     log("Attempting to load WASM engine...", "info");
-    importScripts('../build/parser.js'); 
-    Module.onRuntimeInitialized = () => {
-        wasmModule = Module;
-        log('WASM Engine Initialized & Ready', 'success');
-    };
+    updateStatus('working', 'BOOTING WASM...');
+    
+    // Fallback paths to handle different hosting environments and GitHub Pages structures
+    const paths = [
+        '../build/parser.js', 
+        './build/parser.js', 
+        '../../build/parser.js', 
+        '/build/parser.js'
+    ];
+    
+    let loaded = false;
+    for (let p of paths) {
+        try {
+            importScripts(p);
+            loaded = true;
+            log(`Successfully loaded parser script from: ${p}`, 'info');
+            break;
+        } catch (e) {
+            // Silently try the next path
+        }
+    }
+    
+    if (!loaded) {
+        throw new Error("Failed to load parser.js from all known paths. Ensure you are running on a local web server (http://localhost), NOT the file:// protocol.");
+    }
+    
 } catch (e) {
-    log(`Failed to load parser.js: ${e.message}. Is the path correct?`, 'error');
+    log(`CRITICAL: ${e.message}`, 'error');
     updateStatus('error', 'WASM LOAD FAIL');
 }
 
