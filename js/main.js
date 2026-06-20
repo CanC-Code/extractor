@@ -15,7 +15,6 @@ const seen = new Set();
 let currentFile = null;
 let assetCount = 0;
 
-// Three.js Core
 let scene, camera, renderer, currentModelMesh;
 
 function initThree() {
@@ -61,16 +60,10 @@ function initWorker() {
         worker = new Worker('js/worker.js');
         worker.onmessage = (e) => {
             const { type, data, logType } = e.data;
-
-            if (type === 'LOG') {
-                log(data, logType);
-            } else if (type === 'ASSET_FOUND_META') {
-                handleAssetDiscovery(data);
-            } else if (type === 'ASSET_EXTRACTED') {
-                handleExtractedAsset(data);
-            }
+            if (type === 'LOG') log(data, logType);
+            else if (type === 'ASSET_FOUND_META') handleAssetDiscovery(data);
+            else if (type === 'ASSET_EXTRACTED') handleExtractedAsset(data);
         };
-        log('Background worker ready', 'success');
     } catch (err) { 
         log(`Failed to create worker: ${err.message}`, 'error'); 
     }
@@ -82,22 +75,19 @@ function handleAssetDiscovery(data) {
     assetCount++;
     scanProgress.textContent = `${assetCount} found`;
 
-    // FIXED: Highly robust Unity Asset identification regex.
-    // Catches .assets, .resource, .resS, .bundle, .unity3d, .assetbundle, .mesh, .obj, .fbx, .prefab
-    // OR any file named 'level#' or 'sharedassets#' inside bin/Data/ paths.
-    const isModelContainer = /\.(assets|resource|ress|bundle|unity3d|assetbundle|mesh|fbx|obj|prefab)$/i.test(data.name) || 
+    // Flag Unity Containers that require C++ Unpacking
+    const isModelContainer = /\.(assets|resource|ress|bundle|unity3d|assetbundle)$/i.test(data.name) || 
                              /bin\/data\/(level\d+|sharedassets\d+)/i.test(data.name) ||
-                             /aa\/.*\.bundle/i.test(data.name); // Addressables support
+                             /aa\/.*\.bundle/i.test(data.name); 
     
     const listTarget = isModelContainer ? modelList : assetList;
-
     const item = document.createElement('li');
     item.className = "p-2 border-b border-zinc-800 text-[10px] flex justify-between items-center hover:bg-zinc-800 transition-colors rounded";
     
     item.innerHTML = `
         <div class="flex flex-col truncate pr-2">
-            <span class="${isModelContainer ? 'text-emerald-300' : 'text-amber-300'} font-semibold truncate" title="${data.name}">${data.name}</span>
-            <span class="text-zinc-500">Offset: 0x${(data.offset || 0).toString(16).toUpperCase()} | Size: ${(data.size / 1024).toFixed(1)} KB</span>
+            <span class="${isModelContainer ? 'text-emerald-300' : 'text-amber-300'} font-semibold truncate" title="${data.name}">${data.name.split('/').pop()}</span>
+            <span class="text-zinc-500">Offset: 0x${(data.offset || 0).toString(16).toUpperCase()}</span>
         </div>
         <button class="px-3 py-1.5 ${isModelContainer ? 'bg-emerald-700 hover:bg-emerald-600' : 'bg-zinc-700 hover:bg-blue-600'} rounded font-bold transition-colors shadow-sm whitespace-nowrap">
             ${isModelContainer ? 'PARSE BUNDLE' : 'EXTRACT'}
@@ -105,7 +95,7 @@ function handleAssetDiscovery(data) {
     `;
 
     item.querySelector('button').onclick = () => {
-        log(`Extracting: ${data.name}`);
+        log(`Extracting: ${data.name.split('/').pop()}`);
         statusBadge.textContent = 'EXTRACTING...';
         statusBadge.className = "bg-amber-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-amber-700 uppercase tracking-widest text-amber-400";
         
@@ -121,59 +111,39 @@ function handleAssetDiscovery(data) {
 }
 
 function handleExtractedAsset(data) {
-    const { name, buffer, isContainer } = data;
-    log(`Extracted ${name} (${buffer.byteLength} bytes)`, 'success');
+    const { name, buffer, isModel } = data;
+    log(`Unpacked ${name} (${buffer.byteLength} bytes)`, 'success');
     statusBadge.textContent = 'SYSTEM IDLE';
     statusBadge.className = "bg-zinc-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-zinc-700 uppercase tracking-widest text-zinc-400";
 
-    if (isContainer) {
-        // Ready for WASM injection
-        renderPlaceholderModel(name); 
-    } else {
-        const blob = new Blob([buffer]);
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name.split('/').pop();
-        a.click();
-        URL.revokeObjectURL(url);
-    }
-}
-
-// Temporary geometry logic awaiting WASM buffer injection
-function renderPlaceholderModel(name) {
-    if (currentModelMesh) scene.remove(currentModelMesh);
-    
-    const geometry = new THREE.TorusKnotGeometry(1, 0.3, 100, 16);
-    const material = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.4, metalness: 0.2 });
-    currentModelMesh = new THREE.Mesh(geometry, material);
-    scene.add(currentModelMesh);
-    log(`Viewport rendering placeholder for ${name}`, 'success');
+    // Standard download trigger for unpacked assets
+    const blob = new Blob([buffer]);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name.split('/').pop();
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
 function handleFile(file) {
     if (!file) return;
     currentFile = file;
 
-    // Reset State
     logs.innerHTML = '';
     modelList.innerHTML = '';
     assetList.innerHTML = '';
     seen.clear();
     assetCount = 0;
     scanProgress.textContent = '0 found';
-    if (currentModelMesh) scene.remove(currentModelMesh);
 
-    log(`Mounted: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`, 'success');
+    log(`Mounted: ${file.name}`, 'success');
     statusBadge.textContent = 'SCANNING APK...';
     statusBadge.className = "bg-blue-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-blue-700 uppercase tracking-widest text-blue-400";
     
-    if (worker) {
-        worker.postMessage({ type: 'PROCESS_FILE', file: file });
-    }
+    if (worker) worker.postMessage({ type: 'PROCESS_FILE', file: file });
 }
 
-// UI Triggers
 dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); });
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
