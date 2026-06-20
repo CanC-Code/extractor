@@ -1,19 +1,30 @@
-// Configure the Emscripten Module environment to intercept C++ stdout
+let wasmEngineReady = false;
+
+// Configure the Emscripten Module environment
 var Module = {
     onRuntimeInitialized: function() {
+        wasmEngineReady = true;
         postMessage({ type: 'LOG', data: 'WASM C++ Engine Initialized & Ready.', logType: 'success' });
-        postMessage({ type: 'WASM_READY' }); // Unlocks the UI
+        postMessage({ type: 'WASM_READY' }); 
     },
     print: function(text) {
-        postMessage({ type: 'LOG', data: text, logType: 'system' });
+        postMessage({ type: 'LOG', data: `[C++] ${text}`, logType: 'system' });
     },
     printErr: function(text) {
-        postMessage({ type: 'LOG', data: text, logType: 'error' });
+        postMessage({ type: 'LOG', data: `[C++ ERROR] ${text}`, logType: 'error' });
     }
 };
 
-// Import the Emscripten glue code (must be in the /build/ directory)
-importScripts('../build/parser.js');
+// Attempt to load the WASM glue script securely
+try {
+    importScripts('../build/parser.js');
+} catch (error) {
+    postMessage({ 
+        type: 'LOG', 
+        data: `CRITICAL: Failed to load parser.js. Ensure it exists in the /build/ directory. Extractor will run in scan-only mode. Error: ${error.message}`, 
+        logType: 'error' 
+    });
+}
 
 self.onmessage = async function(e) {
     if (e.data.type === 'PROCESS_FILE') {
@@ -47,7 +58,7 @@ self.onmessage = async function(e) {
                         const absoluteOffset = offset + i;
                         try {
                             parseUnityFSHeader(view, i, absoluteOffset, file.size, u8);
-                        } catch (err) {} // Ignore false positives
+                        } catch (err) {} 
                     }
                 }
 
@@ -115,19 +126,20 @@ function parseUnityFSHeader(view, localOffset, absoluteOffset, totalFileSize, u8
         logType: 'success' 
     });
 
-    // --- THE WASM MEMORY BRIDGE ---
-    // Allocate memory in the C++ heap for the chunk we just validated
-    const byteLength = u8Array.byteLength - localOffset;
-    const ptr = Module._malloc(byteLength);
-    
-    // Copy the JavaScript Uint8Array data into the C++ WebAssembly memory
-    Module.HEAPU8.set(u8Array.subarray(localOffset), ptr);
-    
-    // Call the C++ engine function
-    Module._process_unity_archive(ptr, byteLength, absoluteOffset, dataStartAbsoluteOffset, blocksInfoAbsoluteOffset);
-    
-    // Free the C++ memory to prevent memory leaks
-    Module._free(ptr);
+    if (wasmEngineReady) {
+        const byteLength = u8Array.byteLength - localOffset;
+        const ptr = Module._malloc(byteLength);
+        
+        Module.HEAPU8.set(u8Array.subarray(localOffset), ptr);
+        Module._process_unity_archive(ptr, byteLength, absoluteOffset, dataStartAbsoluteOffset, blocksInfoAbsoluteOffset);
+        Module._free(ptr);
+    } else {
+        self.postMessage({ 
+            type: 'LOG', 
+            data: `Cannot process bundle. C++ WASM Engine is offline.`, 
+            logType: 'error' 
+        });
+    }
 }
 
 function extractRealAssetNames(u8, chunkOffset) {
