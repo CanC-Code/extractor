@@ -1,149 +1,152 @@
-// js/worker.js
-
-let isWasmReady = false;
-let messageQueue = [];
-
+// Configure the Emscripten Module environment to intercept C++ stdout
 var Module = {
-    locateFile: function(path, prefix) {
-        if (path.endsWith('.wasm')) {
-            return '../build/' + path;
-        }
-        return prefix + path;
+    onRuntimeInitialized: function() {
+        postMessage({ type: 'LOG', data: 'WASM C++ Engine Initialized & Ready.', logType: 'success' });
+        postMessage({ type: 'WASM_READY' }); // Unlocks the UI
     },
     print: function(text) {
-        self.postMessage({ type: 'LOG', logType: 'info', data: text });
+        postMessage({ type: 'LOG', data: text, logType: 'system' });
     },
     printErr: function(text) {
-        self.postMessage({ type: 'LOG', logType: 'error', data: text });
-    },
-    onRuntimeInitialized: function() {
-        self.postMessage({ type: 'LOG', logType: 'info', data: '[WASM] Engine hooks successfully attached.' });
+        postMessage({ type: 'LOG', data: text, logType: 'error' });
     }
 };
 
-try {
-    importScripts('../build/parser.js');
-    if (typeof createUnityParser === 'function') {
-        self.postMessage({ type: 'LOG', logType: 'info', data: 'Instantiating WASM Module (Max 2GB Safe Limit)...' });
-        
-        createUnityParser(Module).then((instance) => {
-            self.Module = instance;
-            isWasmReady = true;
-            
-            self.postMessage({ type: 'LOG', logType: 'info', data: '✅ WASM Runtime Initialized Successfully.' });
-            self.postMessage({ type: 'READY' });
-            
-            // Process any tasks that were queued while WASM was loading
-            while (messageQueue.length > 0) {
-                processMessage(messageQueue.shift());
+// Import the Emscripten glue code (must be in the /build/ directory)
+importScripts('../build/parser.js');
+
+self.onmessage = async function(e) {
+    if (e.data.type === 'PROCESS_FILE') {
+        const file = e.data.file;
+        const chunkSize = 10 * 1024 * 1024; // 10MB chunks
+        let offset = 0;
+
+        self.postMessage({ type: 'LOG', data: `Beginning chunked deep scan...`, logType: 'system' });
+        self.postMessage({ type: 'PROGRESS', data: 0 });
+
+        const readNextChunk = () => {
+            if (offset >= file.size) {
+                self.postMessage({ type: 'LOG', data: `Scan complete.`, logType: 'success' });
+                self.postMessage({ type: 'PROGRESS', data: 100 });
+                return;
             }
-            
-        }).catch((err) => {
-            self.postMessage({ type: 'ERROR', command: 'init', error: `WASM Instantiation failed: ${err.message}` });
-        });
-    } else {
-        self.Module = Module;
-        isWasmReady = true;
-        self.postMessage({ type: 'READY' });
-        
-        while (messageQueue.length > 0) {
-            processMessage(messageQueue.shift());
-        }
-    }
-} catch (error) {
-    self.postMessage({ type: 'ERROR', command: 'init', error: `Fatal import error: ${error.message}` });
-}
 
-// Intercept incoming messages and queue them if WASM isn't ready
-self.onmessage = function(event) {
-    if (!isWasmReady || !self.Module || !self.Module.HEAPU8) {
-        self.postMessage({ type: 'LOG', logType: 'info', data: '[JS] WASM initializing, queuing request...' });
-        messageQueue.push(event);
-        return;
-    }
-    
-    processMessage(event);
-};
+            const slice = file.slice(offset, offset + chunkSize);
+            const reader = new FileReader();
 
-// Core processing logic safely decoupled from the message listener
-function processMessage(event) {
-    const { command, payload } = event.data;
+            reader.onload = function(evt) {
+                const buffer = evt.target.result;
+                const view = new DataView(buffer);
+                const u8 = new Uint8Array(buffer);
+                
+                self.postMessage({ type: 'PROGRESS', data: ((offset / file.size) * 100).toFixed(1) });
 
-    try {
-        switch (command) {
-            case 'PROCESS_FILE': {
-                const file = payload.file;
-                self.postMessage({ type: 'LOG', logType: 'info', data: `[JS] Loading ${file.name} into memory...` });
-
-                file.arrayBuffer().then(buffer => {
-                    const uint8View = new Uint8Array(buffer);
-                    const size = uint8View.length;
-
-                    self.postMessage({ type: 'LOG', logType: 'info', data: `[JS] Allocating WASM heap for ${size} bytes...` });
-                    const dataPtr = self.Module._malloc(size);
-                    
-                    if (dataPtr === 0) {
-                        throw new Error(`WASM out of memory: Failed to allocate ${size} bytes.`);
+                // Scan for UnityFS headers
+                for (let i = 0; i < u8.length - 7; i++) {
+                    if (u8[i] === 85 && u8[i+1] === 110 && u8[i+2] === 105 && u8[i+3] === 116 && u8[i+4] === 121 && u8[i+5] === 70 && u8[i+6] === 83) {
+                        const absoluteOffset = offset + i;
+                        try {
+                            parseUnityFSHeader(view, i, absoluteOffset, file.size, u8);
+                        } catch (err) {} // Ignore false positives
                     }
-
-                    self.Module.HEAPU8.set(uint8View, dataPtr);
-
-                    self.postMessage({ type: 'LOG', logType: 'info', data: `[JS] Executing process_unity_archive in C++...` });
-                    const resultPtr = self.Module.ccall(
-                        'process_unity_archive', 
-                        'number',                    
-                        ['number', 'number'],    
-                        [dataPtr, size]          
-                    );
-
-                    const resultString = self.Module.UTF8ToString(resultPtr);
-                    
-                    self.postMessage({ type: 'LOG', logType: 'info', data: `[JS] Freeing allocated heap memory...` });
-                    self.Module._free(dataPtr);
-                    self.Module._free_buffer(resultPtr);
-
-                    self.postMessage({ type: 'SUCCESS', command: 'PROCESS_FILE', result: resultString });
-                }).catch(error => {
-                    self.postMessage({ type: 'ERROR', command: 'PROCESS_FILE', error: `Failed to read file buffer: ${error.message}` });
-                });
-                break;
-            }
-
-            case 'deinterleave_mesh': {
-                self.postMessage({ type: 'LOG', logType: 'info', data: `[JS] Preparing to deinterleave mesh...` });
-                const meshData = new Uint8Array(payload.meshData);
-                
-                self.postMessage({ type: 'LOG', logType: 'info', data: `[JS] Allocating WASM heap for ${meshData.length} bytes...` });
-                const bufferPtr = self.Module._malloc(meshData.length);
-                
-                if (bufferPtr === 0) {
-                    throw new Error(`WASM out of memory: Failed to allocate ${meshData.length} bytes.`);
                 }
 
-                self.Module.HEAPU8.set(meshData, bufferPtr);
+                extractRealAssetNames(u8, offset);
+                offset += chunkSize;
+                setTimeout(readNextChunk, 10); 
+            };
 
-                self.postMessage({ type: 'LOG', logType: 'info', data: `[JS] Executing deinterleave_mesh in C++...` });
-                const resultPtr = self.Module.ccall(
-                    'deinterleave_mesh',
-                    'number',             
-                    ['number', 'number'],
-                    [bufferPtr, payload.numVertices]
-                );
+            reader.onerror = function() {
+                self.postMessage({ type: 'LOG', data: `Buffer read error at offset ${offset}`, logType: 'error' });
+            };
+            reader.readAsArrayBuffer(slice);
+        };
+        readNextChunk(); 
+    }
+};
 
-                const objFileString = self.Module.UTF8ToString(resultPtr);
+function parseUnityFSHeader(view, localOffset, absoluteOffset, totalFileSize, u8Array) {
+    let pos = localOffset;
 
-                self.postMessage({ type: 'LOG', logType: 'info', data: `[JS] Freeing allocated heap memory...` });
-                self.Module._free(bufferPtr);
-                self.Module._free_buffer(resultPtr); 
-
-                self.postMessage({ type: 'SUCCESS', command: command, result: objFileString });
-                break;
-            }
-
-            default:
-                throw new Error('Unknown command execution requested.');
+    function readString(maxLength = 64) {
+        let str = '';
+        let start = pos;
+        while (pos < view.byteLength) {
+            if (pos - start > maxLength) throw new Error("String exceeded max length.");
+            let char = view.getUint8(pos++);
+            if (char === 0) return str;
+            str += String.fromCharCode(char);
         }
-    } catch (error) {
-        self.postMessage({ type: 'ERROR', command: command, error: error.message });
+        throw new Error("End of buffer reached.");
+    }
+
+    const signature = readString(10);
+    if (signature !== "UnityFS" && signature !== "UnityRaw") throw new Error("Invalid signature.");
+    if (pos + 24 > view.byteLength) throw new Error("Header truncated.");
+
+    const formatVersion = view.getUint32(pos, false); pos += 4;
+    const unityVersion = readString(32);
+    const unityRevision = readString(32);
+
+    if (pos + 20 > view.byteLength) throw new Error("Header truncated.");
+
+    const size = Number(view.getBigUint64(pos, false)); pos += 8;
+    const ciBlocksInfoSize = view.getUint32(pos, false); pos += 4;
+    const uiBlocksInfoSize = view.getUint32(pos, false); pos += 4;
+    const flags = view.getUint32(pos, false); pos += 4;
+
+    const headerSize = pos - localOffset;
+    const blocksAtEnd = (flags & 0x80) !== 0;
+
+    let blocksInfoAbsoluteOffset = 0;
+    let dataStartAbsoluteOffset = 0;
+
+    if (blocksAtEnd) {
+        blocksInfoAbsoluteOffset = absoluteOffset + size - ciBlocksInfoSize; 
+        dataStartAbsoluteOffset = absoluteOffset + headerSize;
+    } else {
+        blocksInfoAbsoluteOffset = absoluteOffset + headerSize;
+        dataStartAbsoluteOffset = absoluteOffset + headerSize + ciBlocksInfoSize;
+    }
+
+    self.postMessage({ 
+        type: 'LOG', 
+        data: `[BUNDLE FOUND] Offset: 0x${absoluteOffset.toString(16).toUpperCase()} | Size: ${(size/1024/1024).toFixed(2)}MB`, 
+        logType: 'success' 
+    });
+
+    // --- THE WASM MEMORY BRIDGE ---
+    // Allocate memory in the C++ heap for the chunk we just validated
+    const byteLength = u8Array.byteLength - localOffset;
+    const ptr = Module._malloc(byteLength);
+    
+    // Copy the JavaScript Uint8Array data into the C++ WebAssembly memory
+    Module.HEAPU8.set(u8Array.subarray(localOffset), ptr);
+    
+    // Call the C++ engine function
+    Module._process_unity_archive(ptr, byteLength, absoluteOffset, dataStartAbsoluteOffset, blocksInfoAbsoluteOffset);
+    
+    // Free the C++ memory to prevent memory leaks
+    Module._free(ptr);
+}
+
+function extractRealAssetNames(u8, chunkOffset) {
+    let str = "";
+    let matches = 0;
+    for (let i = 0; i < u8.length; i++) {
+        const charCode = u8[i];
+        if (charCode >= 32 && charCode <= 126) {
+            str += String.fromCharCode(charCode);
+        } else {
+            if (str.length > 6) {
+                const lowerStr = str.toLowerCase();
+                if (lowerStr.includes('.mesh') || lowerStr.includes('.mat') || lowerStr.includes('.tex') || str.startsWith('CAB-')) {
+                    self.postMessage({ type: 'ASSET_FOUND_META', data: { name: str, offset: chunkOffset + i } });
+                    matches++;
+                    if (matches > 20) break; 
+                }
+            }
+            str = ""; 
+        }
     }
 }
