@@ -21,30 +21,40 @@ onmessage = async function(e) {
                 if (arr[i] === 0x50 && arr[i+1] === 0x4B && arr[i+2] === 0x03 && arr[i+3] === 0x04) {
                     
                     const view = new DataView(buffer, i, 30);
+                    const flags = view.getUint16(6, true);
                     const compressionMethod = view.getUint16(8, true);
                     const compSize = view.getUint32(18, true);
                     const nameLen = view.getUint16(26, true);
                     const extraLen = view.getUint16(28, true);
                     
+                    // Bit 3 determines if a data descriptor is used (sizes in header might be 0)
+                    const hasDataDescriptor = (flags & 0x0008) !== 0; 
+                    
                     if (i + 30 + nameLen <= arr.length) {
                         const nameBytes = new Uint8Array(buffer, i + 30, nameLen);
-                        const name = decoder.decode(nameBytes);
+                        // Decode and remove any trailing nulls or whitespace
+                        let name = decoder.decode(nameBytes).replace(/\0/g, '').trim();
                         const dataOffset = i + 30 + nameLen + extraLen;
 
-                        postMessage({
-                            type: 'ASSET_FOUND_META',
-                            data: {
-                                name: name,
-                                offset: dataOffset,
-                                size: compSize,
-                                compressed: compressionMethod !== 0
-                            }
-                        });
-                        foundCount++;
+                        // Ignore empty directory entries
+                        if (!name.endsWith('/')) {
+                            postMessage({
+                                type: 'ASSET_FOUND_META',
+                                data: {
+                                    name: name,
+                                    offset: dataOffset,
+                                    size: compSize,
+                                    compressed: compressionMethod !== 0
+                                }
+                            });
+                            foundCount++;
+                        }
                     }
                     
-                    if (compSize > 0) {
-                        i += (29 + nameLen + extraLen + compSize);
+                    // Optimization: Safely jump past the data chunk if sizes are known in the header
+                    if (!hasDataDescriptor && compSize > 0) {
+                        // -1 because the loop's i++ will advance it the final byte
+                        i += (30 + nameLen + extraLen + compSize - 1);
                     }
                 }
             }
