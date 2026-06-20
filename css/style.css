@@ -1,151 +1,31 @@
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: #1e1e1e;
-    color: #f0f0f0;
-    margin: 0;
-    padding: 20px;
-    display: flex;
-    justify-content: center;
-}
+/* Custom Scrollbars */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
 
-.container {
+/* Viewport Initialization */
+#renderCanvas {
+    display: block;
     width: 100%;
-    max-width: 800px;
-    background-color: #2d2d2d;
-    padding: 30px;
-    border-radius: 8px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-}
-
-h1 { margin-top: 0; color: #4CAF50; }
-p { color: #b0b0b0; line-height: 1.5; }
-
-.upload-section {
-    margin: 25px 0;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-}
-
-#file-input { display: none; }
-
-#file-label {
-    background-color: #4CAF50;
-    color: white;
-    padding: 12px 24px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: bold;
-    transition: background-color 0.3s ease;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-}
-
-#file-label:hover { background-color: #45a049; }
-
-/* Tab Navigation */
-.tabs {
-    overflow: hidden;
-    background-color: #333;
-    border-radius: 4px 4px 0 0;
-    display: flex;
-    margin-top: 20px;
-}
-
-.tab-link {
-    background-color: inherit;
-    color: #f0f0f0;
-    float: left;
-    border: none;
+    height: 100%;
     outline: none;
-    cursor: pointer;
-    padding: 14px 16px;
-    transition: 0.3s;
-    font-size: 16px;
-    flex: 1;
-    font-weight: bold;
 }
 
-.tab-link:hover { background-color: #444; }
-.tab-link.active { background-color: #4CAF50; color: white; }
-
-/* Tab Content */
-.tab-content {
-    display: none;
-    padding: 20px;
-    background-color: #222;
-    border: 1px solid #4CAF50;
-    border-top: none;
-    border-radius: 0 0 4px 4px;
+/* Ensure data lists scroll internally without breaking layout */
+#logs, #modelList, #assetList {
+    scrollbar-width: thin;
+    scrollbar-color: #3f3f46 transparent;
+    padding-right: 4px;
 }
 
-.tab-content.active { display: block; }
-.placeholder-text { color: #888; font-style: italic; text-align: center; padding: 20px; }
-
-/* Status and Console */
-.status-box {
-    margin-bottom: 20px;
-    font-weight: bold;
-    color: #ff9800; 
-    padding: 10px;
-    background-color: #1a1a1a;
-    border-radius: 4px;
-    border-left: 4px solid currentcolor;
+/* Drag & Drop Visual Feedback */
+.dragover {
+    border-color: #3b82f6 !important;
+    background-color: rgba(37, 99, 235, 0.1) !important;
 }
 
-.log-console {
-    background-color: #0c0c0c;
-    color: #00ff00;
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 14px;
-    padding: 15px;
-    height: 350px;
-    overflow-y: auto;
-    border-radius: 4px;
-    border: 1px solid #444;
-    white-space: pre-wrap;
-    word-wrap: break-word;
+/* Base text rendering optimizations */
+body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
-
-/* Dynamic Extracted File List Styling */
-.file-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background-color: #333;
-    padding: 10px 15px;
-    margin-bottom: 8px;
-    border-radius: 4px;
-    border: 1px solid #444;
-}
-
-.file-name {
-    font-weight: bold;
-    color: #e0e0e0;
-    flex: 2;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.file-size {
-    color: #888;
-    font-size: 0.9em;
-    flex: 1;
-    text-align: right;
-    padding-right: 15px;
-}
-
-.download-btn, .action-btn {
-    background-color: #2196F3;
-    color: white;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-weight: bold;
-    transition: background-color 0.2s;
-}
-
-.download-btn:hover { background-color: #0b7dda; }
-.action-btn { background-color: #9C27B0; }
-.action-btn:hover { background-color: #7b1fa2; }
