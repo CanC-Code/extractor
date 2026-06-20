@@ -11,6 +11,6 @@ emcc asset_parser.cpp -o ../build/parser.js \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s INITIAL_MEMORY=268435456 \
     -s EXPORTED_RUNTIME_METHODS='["ccall", "cwrap", "malloc", "free"]' \
-    -s EXPORTED_FUNCTIONS='["_process_unity_archive", "_malloc", "_free"]'
+    -s EXPORTED_FUNCTIONS='["_process_unity_archive", "_malloc", "_free", "_deinterleave_mesh", "_free_buffer"]'
 
-echo "Build complete. parser.js and parser.wasm generated in /build"
+echo "Build complete. parser.js and parser.wasm generated."
