@@ -15,13 +15,16 @@ var Module = {
     },
     printErr: function(text) {
         self.postMessage({ type: 'LOG', logType: 'error', data: text });
+    },
+    onRuntimeInitialized: function() {
+        self.postMessage({ type: 'LOG', logType: 'info', data: '[WASM] Engine hooks successfully attached.' });
     }
 };
 
 try {
     importScripts('../build/parser.js');
     if (typeof createUnityParser === 'function') {
-        self.postMessage({ type: 'LOG', logType: 'info', data: 'Instantiating WASM Module...' });
+        self.postMessage({ type: 'LOG', logType: 'info', data: 'Instantiating WASM Module (Max 2GB Safe Limit)...' });
         
         createUnityParser(Module).then((instance) => {
             self.Module = instance;
@@ -32,8 +35,7 @@ try {
             
             // Process any tasks that were queued while WASM was loading
             while (messageQueue.length > 0) {
-                const queuedEvent = messageQueue.shift();
-                processMessage(queuedEvent);
+                processMessage(messageQueue.shift());
             }
             
         }).catch((err) => {
