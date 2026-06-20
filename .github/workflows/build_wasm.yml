@@ -18,6 +18,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          # Fetch full history so git has the necessary context to perform a rebase
+          fetch-depth: 0
 
       - name: Setup Emscripten SDK
         uses: mymindstorm/setup-emsdk@v14
@@ -42,4 +45,9 @@ jobs:
           git add -f build/parser.wasm
           
           git commit -m "Auto-compile WASM artifacts" || echo "No changes to commit"
-          git push
+          
+          # Fetch and rebase against the latest remote changes to prevent push rejections
+          git pull --rebase origin main
+          
+          # Push the updated local HEAD explicitly back to the remote main branch
+          git push origin HEAD:main
