@@ -12,7 +12,6 @@ struct VertexData {
     float u, v;
 };
 
-// Endianness swap helpers for Unity's Big-Endian binary headers
 uint32_t bswap32(uint32_t val) { 
     return (val >> 24) | ((val >> 8) & 0x0000FF00) | ((val << 8) & 0x00FF0000) | (val << 24); 
 }
@@ -23,7 +22,6 @@ uint16_t bswap16(uint16_t val) {
     return (val >> 8) | (val << 8); 
 }
 
-// Standalone LZ4 decompression
 int LZ4_decompress_safe(const char* source, char* dest, int compressedSize, int maxDecompressedSize) {
     const uint8_t* ip = (const uint8_t*)source;
     const uint8_t* iend = ip + compressedSize;
@@ -79,7 +77,7 @@ int LZ4_decompress_safe(const char* source, char* dest, int compressedSize, int 
 }
 
 size_t parse_unityfs_blob(uint8_t* buffer, size_t max_size) {
-    size_t offset = 8; // Skip "UnityFS\0"
+    size_t offset = 8; 
     uint32_t version = bswap32(*(uint32_t*)(buffer + offset)); offset += 4;
 
     while (offset < max_size && buffer[offset] != '\0') offset++; offset++; 
