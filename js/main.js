@@ -1,122 +1,187 @@
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+console.log("🚀 main.js initialized with 3D viewport support");
 
-// --- Viewport Setup ---
-const container = document.getElementById('viewport-container');
-const canvas = document.getElementById('viewer-canvas');
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a0c);
-const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
-camera.position.set(0, 5, 10);
-const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-renderer.setSize(container.clientWidth, container.clientHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-dirLight.position.set(10, 15, 10);
-scene.add(dirLight);
-scene.add(new THREE.GridHelper(20, 20, 0x333333, 0x222222));
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const logs = document.getElementById('logs');
+const modelList = document.getElementById('modelList');
+const assetList = document.getElementById('assetList');
+const canvas = document.getElementById('renderCanvas');
+const statusBadge = document.getElementById('status-badge');
 
-function animate() {
-    requestAnimationFrame(animate);
-    controls.update();
-    renderer.render(scene, camera);
-}
-animate();
+let worker = null;
+const seen = new Set();
+let currentFile = null;
 
-window.addEventListener('resize', () => {
-    camera.aspect = container.clientWidth / container.clientHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(container.clientWidth, container.clientHeight);
-});
+// Three.js Core Components
+let scene, camera, renderer, currentModelMesh;
 
-// --- UI Binding ---
-const terminal = document.getElementById('terminal-log');
-const logContainer = document.getElementById('tab-logs');
-const statusText = document.getElementById('status-text');
-const fileInput = document.getElementById('apk-upload');
-
-// UI is unlocked by default so you can pick the file immediately
-fileInput.disabled = false;
-
-function addLog(msg, type = 'normal') {
-    const div = document.createElement('div');
-    div.className = `log-entry ${type}`;
-    const now = new Date();
-    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
-    div.innerText = `[${timeStr}] ${msg}`;
-    terminal.appendChild(div);
-    logContainer.scrollTop = logContainer.scrollHeight;
-}
-
-let worker;
-try {
-    worker = new Worker('js/worker.js');
-    addLog('Background thread spawned. Connecting to WASM Engine...', 'system');
-} catch (e) {
-    addLog(`Failed to spawn worker: ${e.message}`, 'error');
-}
-
-let assetCount = 0;
-const uniqueAssets = new Set(); 
-
-worker.onmessage = function(e) {
-    const { type, data, logType } = e.data;
+function initThree() {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
     
-    if (type === 'LOG') {
-        addLog(data, logType || 'normal');
-        statusText.innerText = data;
-    } else if (type === 'WASM_READY') {
-        document.querySelector('.custom-file-upload').style.backgroundColor = '#00e676';
-    } else if (type === 'PROGRESS') {
-        document.getElementById('progress-bar').value = data;
-    } else if (type === 'ASSET_FOUND_META') {
-        if (!uniqueAssets.has(data.name)) {
-            uniqueAssets.add(data.name);
-            assetCount++;
-            document.getElementById('asset-count').innerText = assetCount;
-            
-            let typeTag = "UNKNOWN";
-            let tagColor = "#888";
-            const lowerName = data.name.toLowerCase();
-            if (lowerName.includes('.mesh')) { typeTag = "MESH"; tagColor = "#00e676"; }
-            else if (lowerName.includes('.tex') || lowerName.includes('.png')) { typeTag = "TEXTURE"; tagColor = "#29b6f6"; }
-            else if (lowerName.includes('.mat')) { typeTag = "MATERIAL"; tagColor = "#ffca28"; }
-            else if (data.name.startsWith('CAB-')) { typeTag = "CABINET"; tagColor = "#ab47bc"; }
+    renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    camera.position.set(0, 1, 5);
 
-            const li = document.createElement('li');
-            li.innerHTML = `
-                <div class="asset-info">
-                    <span class="asset-name" style="color: ${tagColor}">[${typeTag}] ${data.name}</span>
-                    <span class="asset-meta">Memory Offset: 0x${data.offset.toString(16).toUpperCase()}</span>
-                </div>
-            `;
-            document.getElementById('asset-list').appendChild(li);
+    // Lighting setup for smooth-shaded geometry
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    dirLight.position.set(5, 10, 7.5);
+    scene.add(dirLight);
+    
+    const ambientLight = new THREE.AmbientLight(0x404040, 2);
+    scene.add(ambientLight);
+
+    // Basic animation loop
+    function animate() {
+        requestAnimationFrame(animate);
+        if (currentModelMesh) {
+            currentModelMesh.rotation.y += 0.005;
         }
+        renderer.render(scene, camera);
     }
-};
+    animate();
 
-worker.onerror = function(error) {
-    addLog(`Worker Error: ${error.message}`, 'error');
-};
+    // Handle window resize
+    window.addEventListener('resize', () => {
+        camera.aspect = canvas.clientWidth / canvas.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    });
+}
 
-fileInput.addEventListener('change', (event) => {
-    const file = event.target.files[0];
+function log(msg, type = 'info') {
+    const entry = document.createElement('div');
+    entry.className = type === 'success' ? 'text-emerald-400' : type === 'error' ? 'text-red-400' : 'text-zinc-400';
+    entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logs.appendChild(entry);
+    logs.scrollTop = logs.scrollHeight;
+}
+
+function initWorker() {
+    try {
+        worker = new Worker('js/worker.js');
+        worker.onmessage = (e) => {
+            const { type, data, logType } = e.data;
+
+            if (type === 'LOG') {
+                log(data, logType);
+            } else if (type === 'ASSET_FOUND_META') {
+                handleAssetDiscovery(data);
+            } else if (type === 'ASSET_EXTRACTED') {
+                handleExtractedAsset(data);
+            }
+        };
+        log('Background worker ready', 'success');
+    } catch (err) { 
+        log(`Failed to create worker: ${err.message}`, 'error'); 
+    }
+}
+
+function handleAssetDiscovery(data) {
+    if (seen.has(data.name)) return;
+    seen.add(data.name);
+
+    // Identify if the asset is a 3D model format
+    const isModel = data.name.match(/\.(mesh|fbx|obj|prefab)$/i);
+    const listTarget = isModel ? modelList : assetList;
+
+    const item = document.createElement('li');
+    item.className = "p-2 border-b border-zinc-800 text-[10px] flex justify-between items-center hover:bg-zinc-800 transition-colors rounded";
+    
+    item.innerHTML = `
+        <div class="flex flex-col truncate pr-2">
+            <span class="${isModel ? 'text-emerald-300' : 'text-amber-300'} font-semibold truncate">${data.name}</span>
+            <span class="text-zinc-500">Offset: 0x${(data.offset || 0).toString(16).toUpperCase()}</span>
+        </div>
+        <button class="px-3 py-1.5 ${isModel ? 'bg-emerald-700 hover:bg-emerald-600' : 'bg-zinc-700 hover:bg-blue-600'} rounded font-bold transition-colors shadow-sm whitespace-nowrap">
+            ${isModel ? 'PREVIEW' : 'EXTRACT'}
+        </button>
+    `;
+
+    item.querySelector('button').onclick = () => {
+        log(`Requesting extraction for: ${data.name}`);
+        statusBadge.textContent = 'EXTRACTING...';
+        statusBadge.className = "bg-amber-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-amber-700 uppercase tracking-widest text-amber-400";
+        
+        worker.postMessage({ 
+            type: 'EXTRACT_ASSET', 
+            assetMeta: data,
+            file: currentFile 
+        });
+    };
+
+    listTarget.appendChild(item);
+}
+
+function handleExtractedAsset(data) {
+    const { name, buffer, isModel } = data;
+    log(`Successfully extracted ${name} (${buffer.byteLength} bytes)`, 'success');
+    statusBadge.textContent = 'SYSTEM IDLE';
+    statusBadge.className = "bg-zinc-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-zinc-700 uppercase tracking-widest text-zinc-400";
+
+    if (isModel) {
+        // Here we pass the buffer to Three.js or the WASM geometry de-interleaver
+        renderPlaceholderModel(name); 
+    } else {
+        // Trigger generic file download
+        const blob = new Blob([buffer]);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+}
+
+// Temporary placeholder until WASM geometry parsing is hooked into the buffer
+function renderPlaceholderModel(name) {
+    if (currentModelMesh) scene.remove(currentModelMesh);
+    
+    const geometry = new THREE.TorusKnotGeometry(1, 0.3, 100, 16);
+    const material = new THREE.MeshStandardMaterial({ 
+        color: 0x10b981, 
+        roughness: 0.4, 
+        metalness: 0.2,
+        wireframe: false
+    });
+    
+    currentModelMesh = new THREE.Mesh(geometry, material);
+    scene.add(currentModelMesh);
+    log(`Rendering generated mesh for ${name}`, 'success');
+}
+
+function handleFile(file) {
     if (!file) return;
+    currentFile = file;
 
-    terminal.innerHTML = '';
-    document.getElementById('asset-list').innerHTML = '';
-    assetCount = 0;
-    uniqueAssets.clear();
-    document.getElementById('asset-count').innerText = "0";
+    logs.innerHTML = '';
+    modelList.innerHTML = '';
+    assetList.innerHTML = '';
+    seen.clear();
     
-    addLog(`MOUNTED: ${file.name}`, 'success');
-    addLog(`SIZE: ${(file.size / 1024 / 1024).toFixed(2)} MB`, 'system');
-    statusText.innerText = "Initiating Stream...";
+    if (currentModelMesh) scene.remove(currentModelMesh);
+
+    log(`Mounted: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`, 'success');
+    statusBadge.textContent = 'SCANNING APK...';
     
-    worker.postMessage({ type: 'PROCESS_FILE', file: file });
-    event.target.value = ''; 
+    if (worker) {
+        worker.postMessage({ type: 'PROCESS_FILE', file: file });
+    }
+}
+
+// Event Listeners
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
 });
+
+// Initialization sequence
+initThree();
+initWorker();
