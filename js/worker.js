@@ -1,11 +1,11 @@
 // js/worker.js
 let wasmModule = null;
 
-// Initialize WASM Module
+// Initialize WASM Parser
 importScripts('../build/parser.js'); 
 Module.onRuntimeInitialized = () => {
     wasmModule = Module;
-    postMessage({ type: 'LOG', data: 'WASM C++ Engine Initialized', logType: 'success' });
+    postMessage({ type: 'LOG', data: 'WASM Engine Initialized & Ready', logType: 'success' });
 };
 
 function log(msg, logType = 'info') {
@@ -13,22 +13,19 @@ function log(msg, logType = 'info') {
 }
 
 // C++ callback when a node is extracted from a UnityFS bundle
-self.onFileExtracted = function(fileName, bufferPtr, size) {
+self.onFileExtracted = function(fileName, bufferPtr, size, isSerializedContainer) {
     if (!wasmModule) return;
     
-    // Copy data from WASM heap to a JS ArrayBuffer
     const heapBytes = new Uint8Array(wasmModule.HEAPU8.buffer, bufferPtr, size);
     const resultBuffer = new Uint8Array(size);
     resultBuffer.set(heapBytes);
-
-    const isModel = /\.(mesh|fbx|obj|prefab)$/i.test(fileName);
 
     postMessage({
         type: 'ASSET_EXTRACTED',
         data: {
             name: fileName,
-            buffer: resultBuffer.buffer, // Send the extracted inner file
-            isModel: isModel
+            buffer: resultBuffer.buffer, 
+            isContainer: isSerializedContainer
         }
     }, [resultBuffer.buffer]); 
 };
@@ -37,7 +34,7 @@ onmessage = async function(e) {
     const { type, file, assetMeta, isContainer } = e.data;
 
     if (type === 'PROCESS_FILE') {
-        log(`Worker initiated binary scan for ${file.name}`);
+        log(`Initiating byte-level scan for ${file.name}`);
         
         try {
             const buffer = await file.arrayBuffer();
@@ -71,9 +68,9 @@ onmessage = async function(e) {
                     if (!hasDataDescriptor && compSize > 0) i += (30 + nameLen + extraLen + compSize - 1);
                 }
             }
-            log(`Scan complete. Found ${foundCount} files.`, "success");
+            log(`Scan Complete. Found ${foundCount} valid files.`, "success");
         } catch (err) {
-            log(`File reading error: ${err.message}`, 'error');
+            log(`File IO error: ${err.message}`, 'error');
         }
     } 
     else if (type === 'EXTRACT_ASSET') {
@@ -84,19 +81,14 @@ onmessage = async function(e) {
             const arrayBuffer = await chunk.arrayBuffer();
 
             if (isContainer && wasmModule) {
-                log(`Sending ${name} to C++ Engine for unpacking...`, 'info');
-                
-                // Allocate memory in WASM heap
+                log(`Sending ${name} payload to WASM Engine...`, 'info');
                 const ptr = wasmModule._malloc(arrayBuffer.byteLength);
                 const heapArray = new Uint8Array(wasmModule.HEAPU8.buffer, ptr, arrayBuffer.byteLength);
                 heapArray.set(new Uint8Array(arrayBuffer));
                 
-                // Call the C++ process function
                 wasmModule.ccall('process_unity_archive', null, ['number', 'number'], [ptr, arrayBuffer.byteLength]);
-                
                 wasmModule._free(ptr);
             } else {
-                // Return standard file directly
                 postMessage({
                     type: 'ASSET_EXTRACTED',
                     data: { name: name, buffer: arrayBuffer, isContainer: false }
