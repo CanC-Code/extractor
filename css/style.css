@@ -11,20 +11,20 @@
     outline: none;
 }
 
-/* Ensure data lists scroll internally without breaking layout */
+/* Scroll boundaries */
 #logs, #modelList, #assetList {
     scrollbar-width: thin;
     scrollbar-color: #3f3f46 transparent;
     padding-right: 4px;
 }
 
-/* Drag & Drop Visual Feedback */
+/* Drag & Drop Effects */
 .dragover {
     border-color: #3b82f6 !important;
     background-color: rgba(37, 99, 235, 0.1) !important;
 }
 
-/* Base text rendering optimizations */
+/* Text rendering optimization */
 body {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
