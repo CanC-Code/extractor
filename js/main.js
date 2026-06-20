@@ -82,9 +82,12 @@ function handleAssetDiscovery(data) {
     assetCount++;
     scanProgress.textContent = `${assetCount} found`;
 
-    // FIXED: Unity packs models inside proprietary containers in the 'assets/bin/Data/' folder.
-    // This regex looks for '.assets', '.resource', '.bundle', or files starting with 'level'.
-    const isModelContainer = (data.name.match(/(\.(assets|resource|bundle|unity3d)|level\d+)$/i) !== null) && data.name.includes('assets/bin/Data/');
+    // FIXED: Highly robust Unity Asset identification regex.
+    // Catches .assets, .resource, .resS, .bundle, .unity3d, .assetbundle, .mesh, .obj, .fbx, .prefab
+    // OR any file named 'level#' or 'sharedassets#' inside bin/Data/ paths.
+    const isModelContainer = /\.(assets|resource|ress|bundle|unity3d|assetbundle|mesh|fbx|obj|prefab)$/i.test(data.name) || 
+                             /bin\/data\/(level\d+|sharedassets\d+)/i.test(data.name) ||
+                             /aa\/.*\.bundle/i.test(data.name); // Addressables support
     
     const listTarget = isModelContainer ? modelList : assetList;
 
@@ -124,8 +127,7 @@ function handleExtractedAsset(data) {
     statusBadge.className = "bg-zinc-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-zinc-700 uppercase tracking-widest text-zinc-400";
 
     if (isContainer) {
-        // TODO: Pass this buffer into your WASM 'parser.js' functions 
-        // (e.g. _deinterleave_mesh) to pull out the geometry array, then render.
+        // Ready for WASM injection
         renderPlaceholderModel(name); 
     } else {
         const blob = new Blob([buffer]);
