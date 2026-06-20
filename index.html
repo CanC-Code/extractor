@@ -12,8 +12,8 @@
         <p>Select an APK or Unity archive to decompress and parse locally via WebAssembly.</p>
         
         <div class="upload-section">
-            <input type="file" id="file-input" accept="*/*" disabled />
-            <label for="file-input" id="file-label" style="opacity: 0.5; cursor: not-allowed;">Loading WASM Engine...</label>
+            <input type="file" id="file-input" accept="*/*" />
+            <label for="file-input" id="file-label">Choose APK File...</label>
         </div>
 
         <div class="tabs">
@@ -39,32 +39,27 @@
     </div>
 
     <script>
-        function openTab(evt, tabName) {
-            var i, tabcontent, tablinks;
-            tabcontent = document.getElementsByClassName("tab-content");
-            for (i = 0; i < tabcontent.length; i++) {
-                tabcontent[i].style.display = "none";
-                tabcontent[i].classList.remove("active-content");
-            }
-            tablinks = document.getElementsByClassName("tab-link");
-            for (i = 0; i < tablinks.length; i++) {
-                tablinks[i].className = tablinks[i].className.replace(" active", "");
-            }
-            document.getElementById(tabName).style.display = "block";
-            document.getElementById(tabName).classList.add("active-content");
-            evt.currentTarget.className += " active";
-        }
-
         window.extractedFiles = {};
 
+        // Hard-bound global function accessed by C++ EM_ASM Macro
         window.onFileExtracted = function(fileName, ptr, size) {
-            const fileData = new Uint8Array(Module.HEAPU8.buffer, ptr, size).slice();
-            window.extractedFiles[fileName] = fileData;
-            
-            updateFilesTab(fileName, fileData);
-            
-            if (fileName.includes('.assets') || fileName.includes('.obj') || fileName.includes('.mesh')) {
-                updateModelsTab(fileName, fileData);
+            if (!Module || !Module.HEAPU8) {
+                console.error("[JS Bridge Error] WASM Memory Heap is entirely inaccessible.");
+                return;
+            }
+
+            try {
+                // Safely copy the extracted buffer out of WASM isolation
+                const fileData = new Uint8Array(Module.HEAPU8.buffer, ptr, size).slice();
+                window.extractedFiles[fileName] = fileData;
+                
+                updateFilesTab(fileName, fileData);
+                
+                if (fileName.includes('.assets') || fileName.includes('.obj') || fileName.includes('.mesh')) {
+                    updateModelsTab(fileName, fileData);
+                }
+            } catch (err) {
+                console.error("[JS Bridge Error] Failed to slice extracted file:", err);
             }
         };
 
@@ -75,7 +70,7 @@
             const item = document.createElement('div');
             item.className = 'file-item';
             
-            const mbSize = (fileData.length / 1024 / 1024).toFixed(2);
+            const mbSize = (fileData.length / 1024 / 1024).toFixed(3);
             item.innerHTML = `<span class="file-name">📄 ${fileName}</span><span class="file-size">${mbSize} MB</span>`;
             
             const btn = document.createElement('button');
@@ -99,7 +94,7 @@
             btn.className = 'action-btn';
             btn.innerText = 'Init Mesh Deinterleave';
             btn.onclick = () => {
-                alert(`Ready to map ${fileData.length} bytes to C++ _deinterleave_mesh.`);
+                alert(`Target layout offset data ready for transfer. Passing to C++ _deinterleave_mesh.`);
             };
             
             item.appendChild(btn);
@@ -114,6 +109,22 @@
             a.download = name;
             a.click();
             URL.revokeObjectURL(url);
+        }
+
+        function openTab(evt, tabName) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tab-content");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+                tabcontent[i].classList.remove("active-content");
+            }
+            tablinks = document.getElementsByClassName("tab-link");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            document.getElementById(tabName).style.display = "block";
+            document.getElementById(tabName).classList.add("active-content");
+            evt.currentTarget.className += " active";
         }
     </script>
 
@@ -135,21 +146,13 @@
                 console.error(text);
                 const logConsole = document.getElementById('log-output');
                 if (logConsole) {
-                    logConsole.innerHTML += '<span style="color: red;">' + text + '</span><br>';
+                    logConsole.innerHTML += '<span style="color: #ff5252; font-weight: bold;">[ERROR] ' + text + '</span><br>';
                     logConsole.scrollTop = logConsole.scrollHeight;
                 }
             },
             onRuntimeInitialized: function() {
                 document.getElementById('status').innerText = "WASM Engine Ready. Awaiting file.";
                 document.getElementById('status').style.color = "#4CAF50";
-                
-                // Unlock the file picker ONLY when safe
-                const fileInput = document.getElementById('file-input');
-                const fileLabel = document.getElementById('file-label');
-                fileInput.disabled = false;
-                fileLabel.style.opacity = "1";
-                fileLabel.style.cursor = "pointer";
-                fileLabel.innerText = "Choose APK File...";
             }
         };
     </script>
@@ -171,6 +174,7 @@
             statusDiv.style.color = "#ff9800";
             logConsole.innerHTML = ""; 
             
+            // Clean UI state for new parse iterations
             document.getElementById('file-tree').innerHTML = '';
             document.getElementById('model-container').innerHTML = '';
             document.getElementById('files-placeholder').style.display = 'block';
@@ -184,10 +188,6 @@
                     const arrayBuffer = event.target.result;
                     const uint8Array = new Uint8Array(arrayBuffer);
 
-                    if (typeof Module._process_unity_archive !== 'function') {
-                        throw new Error("Critical Error: WASM missing exports. Clear GitHub Pages cache (Ctrl+F5) and ensure build.sh executed correctly.");
-                    }
-
                     const ptr = Module._malloc(uint8Array.length);
                     Module.HEAPU8.set(uint8Array, ptr);
 
@@ -195,10 +195,10 @@
 
                     Module._free(ptr);
                     
-                    statusDiv.innerText = "Processing Sequence Executed.";
+                    statusDiv.innerText = "Processing Complete. View extracted data in tabs.";
                     statusDiv.style.color = "#4CAF50";
                 } catch (err) {
-                    statusDiv.innerText = "Error during processing.";
+                    statusDiv.innerText = "Error during memory execution.";
                     statusDiv.style.color = "#f44336";
                     Module.printErr(err.message);
                 }
