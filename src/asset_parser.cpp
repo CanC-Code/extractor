@@ -1,66 +1,52 @@
 #include <emscripten.h>
-#include <iostream>
-#include <cstring>
-#include <cstdint>
 #include <string>
-#include <cstdlib> // Added for malloc
+#include <vector>
+#include <cstdlib>
+#include <cstring>
+#include <cstdio>
+#include <cstdint>
 
-#pragma pack(push, 1)
-struct UnityFSHeader {
-    char signature[8];
-    uint32_t formatVersion;
-    char unityVersion[32];
-    char unityRevision[32];
-    uint64_t size;
-    uint32_t compressedBlocksInfoSize;
-    uint32_t uncompressedBlocksInfoSize;
-    uint32_t flags;
-};
-#pragma pack(pop)
-
+// Define the vertex layout expected from the Unity archive
 struct VertexData {
     float x, y, z;
     float nx, ny, nz;
-    float u, v;
 };
 
+// Wrap exports in extern "C" to prevent C++ name mangling
 extern "C" {
 
-    EMSCRIPTEN_KEEPALIVE
-    void process_unity_archive(unsigned char* data, int size) {
-        if (size < 8) return;
+EMSCRIPTEN_KEEPALIVE
+char* process_unity_archive(const uint8_t* buffer, int numVertices) {
+    if (!buffer || numVertices <= 0) return nullptr;
 
-        if (std::strncmp(reinterpret_cast<char*>(data), "UnityFS", 7) == 0) {
-            UnityFSHeader* header = reinterpret_cast<UnityFSHeader*>(data);
-            std::cout << "[C++] ✅ Valid UnityFS bundle! Size: " << header->size << std::endl;
-        } else {
-            std::cout << "[C++] Not UnityFS header" << std::endl;
-        }
+    std::string obj;
+    // Pre-allocate space (approx 120 bytes per vertex) to optimize performance
+    obj.reserve(numVertices * 120);
+    char line[128];
+    const VertexData* v = reinterpret_cast<const VertexData*>(buffer);
+
+    for (int i = 0; i < numVertices; ++i) {
+        snprintf(line, sizeof(line), "v %.6f %.6f %.6f\n", v[i].x, v[i].y, v[i].z);
+        obj += line;
+        snprintf(line, sizeof(line), "vn %.6f %.6f %.6f\n", v[i].nx, v[i].ny, v[i].nz);
+        obj += line;
     }
 
-    EMSCRIPTEN_KEEPALIVE
-    void process_unity_archive_offset(uint64_t bundleOffset, uint64_t dataStart, uint64_t blocksInfo) {
-        // Implementation remains same
+    // Allocate memory for the resulting C-string. 
+    // This memory MUST be freed by the JS caller later.
+    char* result = (char*)malloc(obj.size() + 1);
+    if (result) {
+        strcpy(result, obj.c_str());
     }
+    return result;
+}
 
-    EMSCRIPTEN_KEEPALIVE
-    char* deinterleave_mesh(unsigned char* buffer, int numVertices) {
-        if (!buffer || numVertices <= 0) return nullptr;
-
-        std::string obj;
-        obj.reserve(numVertices * 120);
-        char line[128];
-        VertexData* v = reinterpret_cast<VertexData*>(buffer);
-
-        for (int i = 0; i < numVertices; ++i) {
-            snprintf(line, sizeof(line), "v %.6f %.6f %.6f\n", v[i].x, v[i].y, v[i].z);
-            obj += line;
-            snprintf(line, sizeof(line), "vn %.6f %.6f %.6f\n", v[i].nx, v[i].ny, v[i].nz);
-            obj += line;
-        }
-
-        char* result = (char*)malloc(obj.size() + 1);
-        if (result) strcpy(result, obj.c_str());
-        return result;
+// Explicit cleanup function exposed to JS to free the returned string
+EMSCRIPTEN_KEEPALIVE
+void free_buffer(char* ptr) {
+    if (ptr) {
+        free(ptr);
     }
 }
+
+} // extern "C"
