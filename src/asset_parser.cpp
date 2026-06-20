@@ -6,17 +6,13 @@
 #include <cstdlib>
 #include <emscripten.h>
 
-// ------------------------------------------------------------------
-// Core Utilities & Structs
-// ------------------------------------------------------------------
-
 struct VertexData {
     float x, y, z;
     float nx, ny, nz;
     float u, v;
 };
 
-// Endianness swap helpers (Unity binary data is frequently Big-Endian)
+// Endianness swap helpers for Unity's Big-Endian binary headers
 uint32_t bswap32(uint32_t val) { 
     return (val >> 24) | ((val >> 8) & 0x0000FF00) | ((val << 8) & 0x00FF0000) | (val << 24); 
 }
@@ -27,11 +23,7 @@ uint16_t bswap16(uint16_t val) {
     return (val >> 8) | (val << 8); 
 }
 
-// ------------------------------------------------------------------
-// Compression & Archive Parsing
-// ------------------------------------------------------------------
-
-// Standalone LZ4 block decompression routine for UnityFS
+// Standalone LZ4 decompression
 int LZ4_decompress_safe(const char* source, char* dest, int compressedSize, int maxDecompressedSize) {
     const uint8_t* ip = (const uint8_t*)source;
     const uint8_t* iend = ip + compressedSize;
@@ -53,14 +45,13 @@ int LZ4_decompress_safe(const char* source, char* dest, int compressedSize, int 
         }
 
         if (op + length > oend || ip + length > iend) return -1;
-
         std::memcpy(op, ip, length);
         op += length;
         ip += length;
 
         if (ip >= iend) break;
-
         if (ip + 2 > iend) return -1;
+        
         uint16_t offset = ip[0] | (ip[1] << 8);
         ip += 2;
 
@@ -87,18 +78,17 @@ int LZ4_decompress_safe(const char* source, char* dest, int compressedSize, int 
     return (int)(op - (uint8_t*)dest);
 }
 
-// Internal function to process an isolated UnityFS block
 size_t parse_unityfs_blob(uint8_t* buffer, size_t max_size) {
     size_t offset = 8; // Skip "UnityFS\0"
     uint32_t version = bswap32(*(uint32_t*)(buffer + offset)); offset += 4;
 
-    while (offset < max_size && buffer[offset] != '\0') offset++; offset++; // Skip Unity Version
-    while (offset < max_size && buffer[offset] != '\0') offset++; offset++; // Skip Engine Version
+    while (offset < max_size && buffer[offset] != '\0') offset++; offset++; 
+    while (offset < max_size && buffer[offset] != '\0') offset++; offset++; 
 
     uint64_t totalSize = bswap64(*(uint64_t*)(buffer + offset)); offset += 8;
 
     if (totalSize == 0 || totalSize > max_size) {
-        std::cout << "[C++ Engine] ERROR: Invalid totalSize (" << totalSize << "). Blob exceeds container limits." << std::endl;
+        std::cout << "[C++ Engine] ERROR: Invalid totalSize. Blob exceeds limits." << std::endl;
         return 0;
     }
 
@@ -106,7 +96,7 @@ size_t parse_unityfs_blob(uint8_t* buffer, size_t max_size) {
     uint32_t uncompressedBlocksInfoSize = bswap32(*(uint32_t*)(buffer + offset)); offset += 4;
     uint32_t flags = bswap32(*(uint32_t*)(buffer + offset)); offset += 4;
 
-    if (version >= 7) offset = (offset + 15) & ~15; // Byte alignment for modern Unity formats
+    if (version >= 7) offset = (offset + 15) & ~15;
 
     uint64_t blocksInfo = (flags & 0x80) ? (totalSize - compressedBlocksInfoSize) : offset;
     uint64_t dataStart = (flags & 0x80) ? offset : (offset + compressedBlocksInfoSize);
@@ -114,15 +104,14 @@ size_t parse_unityfs_blob(uint8_t* buffer, size_t max_size) {
     std::vector<uint8_t> uncompressedBlocksInfo(uncompressedBlocksInfoSize);
     uint32_t compressionMode = flags & 0x3F;
 
-    // Decompress the Block Info directory
-    if (compressionMode == 2 || compressionMode == 3) { // LZ4
+    if (compressionMode == 2 || compressionMode == 3) { 
         int decomp = LZ4_decompress_safe((const char*)(buffer + blocksInfo), (char*)uncompressedBlocksInfo.data(), compressedBlocksInfoSize, uncompressedBlocksInfoSize);
         if (decomp != uncompressedBlocksInfoSize) return totalSize;
-    } else if (compressionMode == 0) { // Uncompressed
+    } else if (compressionMode == 0) {
         std::memcpy(uncompressedBlocksInfo.data(), buffer + blocksInfo, uncompressedBlocksInfoSize);
     }
 
-    size_t infoOffset = 16; // Skip UncompressedDataHash
+    size_t infoOffset = 16; 
     uint32_t blocksCount = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset)); infoOffset += 4;
 
     struct DataBlock { uint32_t uSize, cSize; uint16_t flags; };
@@ -136,7 +125,6 @@ size_t parse_unityfs_blob(uint8_t* buffer, size_t max_size) {
         totalUncompressedDataSize += dataBlocks[i].uSize;
     }
 
-    // Allocate memory for the fully unpacked inner container
     std::vector<uint8_t> rawData(totalUncompressedDataSize);
     uint64_t currentReadOffset = dataStart;
     uint64_t currentWriteOffset = 0;
@@ -154,7 +142,6 @@ size_t parse_unityfs_blob(uint8_t* buffer, size_t max_size) {
 
     uint32_t nodesCount = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset)); infoOffset += 4;
 
-    // Extract each node (These are usually serialized object databases, e.g., CAB-xyz)
     for (uint32_t i = 0; i < nodesCount; i++) {
         uint64_t nodeOffset = bswap64(*(uint64_t*)(uncompressedBlocksInfo.data() + infoOffset)); infoOffset += 8;
         uint64_t nodeSize = bswap64(*(uint64_t*)(uncompressedBlocksInfo.data() + infoOffset)); infoOffset += 8;
@@ -167,22 +154,15 @@ size_t parse_unityfs_blob(uint8_t* buffer, size_t max_size) {
         }
         infoOffset++; 
 
-        std::cout << "[C++ Engine] Node Extracted: " << nodePath << " (" << nodeSize << " bytes) - Ready for Serialized Parsing" << std::endl;
+        std::cout << "[C++ Engine] Extracted Node: " << nodePath << " (" << nodeSize << " bytes)" << std::endl;
 
-        // Determine if this node is a SerializedFile container
         int isSerialized = (nodePath.find("CAB-") != std::string::npos || nodePath.find(".assets") != std::string::npos) ? 1 : 0;
 
-        // Pass the extracted buffer back to the JS DOM Environment dynamically.
         EM_ASM({
             var fileName = UTF8ToString($0);
             var isSerializedContainer = $3 === 1;
-            if (typeof window.onFileExtracted === 'function') {
-                window.onFileExtracted(fileName, $1, $2, isSerializedContainer);
-            } else if (typeof self.onFileExtracted === 'function') {
-                // Support for Web Worker environment
+            if (typeof self.onFileExtracted === 'function') {
                 self.onFileExtracted(fileName, $1, $2, isSerializedContainer);
-            } else {
-                console.error("[WASM Core] JS Callback missing. Cannot deliver file: " + fileName);
             }
         }, nodePath.c_str(), rawData.data() + nodeOffset, nodeSize, isSerialized);
     }
@@ -190,69 +170,48 @@ size_t parse_unityfs_blob(uint8_t* buffer, size_t max_size) {
     return totalSize;
 }
 
-// ------------------------------------------------------------------
-// WASM Exports: Archive Parsing & Mesh Generation
-// ------------------------------------------------------------------
-
 extern "C" {
-
-    // 1. Primary Entry Point for Archive Unpacking
     void process_unity_archive(uint8_t* buffer, size_t size) {
         if (!buffer || size < 8) return;
 
         bool archive_found = false;
         size_t offset = 0;
 
-        std::cout << "[C++ Engine] Scanning payload for UnityFS archives..." << std::endl;
+        std::cout << "[C++ Engine] Scanning container for UnityFS payload..." << std::endl;
 
         while (offset <= size - 8) {
             if (buffer[offset] == 'U' && std::memcmp(buffer + offset, "UnityFS", 7) == 0) {
                 archive_found = true;
-                std::cout << "[C++ Engine] Found UnityFS signature at memory offset 0x" << std::hex << offset << std::dec << std::endl;
-
+                std::cout << "[C++ Engine] UnityFS signature hit at 0x" << std::hex << offset << std::dec << std::endl;
                 size_t parsed_bytes = parse_unityfs_blob(buffer + offset, size - offset);
-
-                if (parsed_bytes > 0) {
-                    offset += parsed_bytes; 
-                } else {
-                    offset += 8;
-                }
+                if (parsed_bytes > 0) offset += parsed_bytes; 
+                else offset += 8;
             } else {
                 offset++;
             }
         }
-
-        if (!archive_found) {
-            std::cout << "[C++ Engine] VALIDATION FAILED: No UnityFS signatures detected in provided APK chunk." << std::endl;
-        } else {
-            std::cout << "[C++ Engine] Extracted all embedded Unity data targets successfully." << std::endl;
-        }
+        if (!archive_found) std::cout << "[C++ Engine] No UnityFS signatures inside chunk." << std::endl;
     }
 
-    // 2. Geometry Extraction: Converts raw byte streams into structured Float arrays for Three.js
     float* deinterleave_mesh(uint8_t* rawData, int vertexCount, int vertexStride, int positionOffset, int normalOffset, int uvOffset) {
         if (!rawData || vertexCount <= 0 || vertexStride <= 0) return nullptr;
         
-        int numFloats = vertexCount * 8; // 3 pos + 3 norm + 2 uv
+        int numFloats = vertexCount * 8; 
         float* outBuffer = (float*)malloc(numFloats * sizeof(float));
         if (!outBuffer) return nullptr;
 
         for (int i = 0; i < vertexCount; i++) {
             uint8_t* vertexPtr = rawData + (i * vertexStride);
-            
-            // Extract Positions
             if (positionOffset >= 0) {
                 outBuffer[i * 3 + 0] = *(float*)(vertexPtr + positionOffset);
                 outBuffer[i * 3 + 1] = *(float*)(vertexPtr + positionOffset + 4);
                 outBuffer[i * 3 + 2] = *(float*)(vertexPtr + positionOffset + 8);
             }
-            // Extract Normals
             if (normalOffset >= 0) {
                 outBuffer[vertexCount * 3 + i * 3 + 0] = *(float*)(vertexPtr + normalOffset);
                 outBuffer[vertexCount * 3 + i * 3 + 1] = *(float*)(vertexPtr + normalOffset + 4);
                 outBuffer[vertexCount * 3 + i * 3 + 2] = *(float*)(vertexPtr + normalOffset + 8);
             }
-            // Extract UVs
             if (uvOffset >= 0) {
                 outBuffer[vertexCount * 6 + i * 2 + 0] = *(float*)(vertexPtr + uvOffset);
                 outBuffer[vertexCount * 6 + i * 2 + 1] = *(float*)(vertexPtr + uvOffset + 4);
@@ -261,37 +220,28 @@ extern "C" {
         return outBuffer;
     }
 
-    // 3. File Generation: Converts raw vertex structures into a downloadable .OBJ file format
     char* interleaveMesh_to_obj(unsigned char* buffer, int numVertices) {
         if (!buffer || numVertices <= 0) return nullptr;
 
         std::string obj;
-        obj.reserve(numVertices * 120); // Pre-allocate memory for speed
+        obj.reserve(numVertices * 120); 
         char line[128];
         
         VertexData* v = reinterpret_cast<VertexData*>(buffer);
 
-        // Standard OBJ format requires Vertices first, then Normals, then Faces
         for (int i = 0; i < numVertices; ++i) {
             snprintf(line, sizeof(line), "v %.6f %.6f %.6f\n", v[i].x, v[i].y, v[i].z);
             obj += line;
         }
-        
         for (int i = 0; i < numVertices; ++i) {
             snprintf(line, sizeof(line), "vn %.6f %.6f %.6f\n", v[i].nx, v[i].ny, v[i].nz);
             obj += line;
         }
 
-        // Return a dynamically allocated C-string for JS to read
         char* result = (char*)malloc(obj.size() + 1);
-        if (result) {
-            strcpy(result, obj.c_str());
-        }
+        if (result) strcpy(result, obj.c_str());
         return result;
     }
 
-    // 4. Memory Management: Crucial for preventing browser crashes during heavy extraction
-    void free_buffer(void* ptr) { 
-        if (ptr) free(ptr); 
-    }
+    void free_buffer(void* ptr) { if (ptr) free(ptr); }
 }
