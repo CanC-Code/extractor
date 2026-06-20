@@ -4,7 +4,7 @@
 #include <cstring>
 #include <string>
 #include <cstdlib>
-#include <emscripten.h> // REQUIRED FOR JS BRIDGE
+#include <emscripten.h>
 
 // Standalone LZ4 block decompression routine optimized for Wasm execution
 int LZ4_decompress_safe(const char* source, char* dest, int compressedSize, int maxDecompressedSize) {
@@ -76,140 +76,170 @@ uint16_t bswap16(uint16_t val) {
 }
 
 extern "C" {
-    void process_unity_archive(uint8_t* buffer, size_t size) {
-        if (size < 8) return;
-        
-        if (std::memcmp(buffer, "UnityFS", 7) == 0) {
-            size_t offset = 8; 
-            
-            uint32_t version = bswap32(*(uint32_t*)(buffer + offset));
-            offset += 4;
+    void process_unity_archive(uint8_t* file_buffer, size_t file_size) {
+        if (file_size < 8) {
+            std::cout << "[C++ Engine] VALIDATION FAILED: File too small." << std::endl;
+            return;
+        }
 
-            while (offset < size && buffer[offset] != '\0') offset++;
-            offset++;
+        std::cout << "[C++ Engine] Scanning " << file_size << " bytes for embedded UnityFS archives..." << std::endl;
+        bool found_unityfs = false;
 
-            while (offset < size && buffer[offset] != '\0') offset++;
-            offset++;
+        // Slide through the entire APK looking for the uncompressed UnityFS magic string
+        for (size_t search_offset = 0; search_offset < file_size - 8; ++search_offset) {
+            if (std::memcmp(file_buffer + search_offset, "UnityFS", 7) == 0) {
+                found_unityfs = true;
+                std::cout << "[C++ Engine] UnityFS Signature Found at offset 0x" << std::hex << search_offset << std::dec << std::endl;
 
-            uint64_t totalSize = bswap64(*(uint64_t*)(buffer + offset));
-            offset += 8;
+                uint8_t* buffer = file_buffer + search_offset;
+                size_t size = file_size - search_offset;
+                size_t offset = 8; 
 
-            uint32_t compressedBlocksInfoSize = bswap32(*(uint32_t*)(buffer + offset));
-            offset += 4;
+                uint32_t version = bswap32(*(uint32_t*)(buffer + offset));
+                offset += 4;
 
-            uint32_t uncompressedBlocksInfoSize = bswap32(*(uint32_t*)(buffer + offset));
-            offset += 4;
+                while (offset < size && buffer[offset] != '\0') offset++;
+                offset++;
 
-            uint32_t flags = bswap32(*(uint32_t*)(buffer + offset));
-            offset += 4;
+                while (offset < size && buffer[offset] != '\0') offset++;
+                offset++;
 
-            if (version >= 7) {
-                offset = (offset + 15) & ~15;
-            }
+                uint64_t totalSize = bswap64(*(uint64_t*)(buffer + offset));
+                offset += 8;
 
-            uint64_t blocksInfo = (flags & 0x80) ? (totalSize - compressedBlocksInfoSize) : offset;
-            uint64_t dataStart = (flags & 0x80) ? offset : (offset + compressedBlocksInfoSize);
+                uint32_t compressedBlocksInfoSize = bswap32(*(uint32_t*)(buffer + offset));
+                offset += 4;
 
-            std::cout << "[C++ Engine] VALIDATION SUCCESS: UnityFS Signature Confirmed in WASM Memory." << std::endl;
-            std::cout << "[C++ Engine] Target Data Start Offset: 0x" << std::hex << dataStart << std::endl;
-            std::cout << "[C++ Engine] Target Blocks Info Offset: 0x" << std::hex << blocksInfo << std::dec << std::endl;
+                uint32_t uncompressedBlocksInfoSize = bswap32(*(uint32_t*)(buffer + offset));
+                offset += 4;
 
-            std::vector<uint8_t> uncompressedBlocksInfo(uncompressedBlocksInfoSize);
-            uint32_t compressionMode = flags & 0x3F;
-            
-            if (compressionMode == 2 || compressionMode == 3) {
-                int decompressedSize = LZ4_decompress_safe(
-                    (const char*)(buffer + blocksInfo),
-                    (char*)uncompressedBlocksInfo.data(),
-                    compressedBlocksInfoSize,
-                    uncompressedBlocksInfoSize
-                );
+                uint32_t flags = bswap32(*(uint32_t*)(buffer + offset));
+                offset += 4;
 
-                if (decompressedSize != uncompressedBlocksInfoSize) {
-                    std::cout << "[C++ Engine] VALIDATION FAILED: Blocks Info LZ4 Decompression failed." << std::endl;
-                    return;
-                }
-            } else if (compressionMode == 0) {
-                std::memcpy(uncompressedBlocksInfo.data(), buffer + blocksInfo, uncompressedBlocksInfoSize);
-            }
-
-            size_t infoOffset = 16;
-            uint32_t blocksCount = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
-            infoOffset += 4;
-            
-            struct DataBlock {
-                uint32_t uncompressedSize;
-                uint32_t compressedSize;
-                uint16_t flags;
-            };
-
-            std::vector<DataBlock> dataBlocks(blocksCount);
-            uint64_t totalUncompressedDataSize = 0;
-
-            for (uint32_t i = 0; i < blocksCount; i++) {
-                dataBlocks[i].uncompressedSize = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
-                infoOffset += 4;
-                dataBlocks[i].compressedSize = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
-                infoOffset += 4;
-                dataBlocks[i].flags = bswap16(*(uint16_t*)(uncompressedBlocksInfo.data() + infoOffset));
-                infoOffset += 2;
-                totalUncompressedDataSize += dataBlocks[i].uncompressedSize;
-            }
-
-            std::vector<uint8_t> rawData(totalUncompressedDataSize);
-            uint64_t currentReadOffset = dataStart;
-            uint64_t currentWriteOffset = 0;
-
-            for (uint32_t i = 0; i < blocksCount; i++) {
-                uint16_t blockCompression = dataBlocks[i].flags & 0x3F;
-
-                if (blockCompression == 2 || blockCompression == 3) {
-                    LZ4_decompress_safe(
-                        (const char*)(buffer + currentReadOffset),
-                        (char*)(rawData.data() + currentWriteOffset),
-                        dataBlocks[i].compressedSize,
-                        dataBlocks[i].uncompressedSize
-                    );
-                } else if (blockCompression == 0) {
-                    std::memcpy(rawData.data() + currentWriteOffset, buffer + currentReadOffset, dataBlocks[i].compressedSize);
+                if (version >= 7) {
+                    offset = (offset + 15) & ~15;
                 }
 
-                currentReadOffset += dataBlocks[i].compressedSize;
-                currentWriteOffset += dataBlocks[i].uncompressedSize;
-            }
+                uint64_t blocksInfo = (flags & 0x80) ? (totalSize - compressedBlocksInfoSize) : offset;
+                uint64_t dataStart = (flags & 0x80) ? offset : (offset + compressedBlocksInfoSize);
 
-            uint32_t nodesCount = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
-            infoOffset += 4;
-
-            for (uint32_t i = 0; i < nodesCount; i++) {
-                uint64_t nodeOffset = bswap64(*(uint64_t*)(uncompressedBlocksInfo.data() + infoOffset));
-                infoOffset += 8;
-                uint64_t nodeSize = bswap64(*(uint64_t*)(uncompressedBlocksInfo.data() + infoOffset));
-                infoOffset += 8;
-                uint32_t nodeStatus = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
-                infoOffset += 4;
-
-                std::string nodePath;
-                while (uncompressedBlocksInfo[infoOffset] != '\0') {
-                    nodePath += (char)uncompressedBlocksInfo[infoOffset];
-                    infoOffset++;
-                }
-                infoOffset++; 
-
-                std::cout << "[C++ Engine] Node Processed: " << nodePath << " (" << nodeSize << " bytes)" << std::endl;
+                std::vector<uint8_t> uncompressedBlocksInfo(uncompressedBlocksInfoSize);
+                uint32_t compressionMode = flags & 0x3F;
                 
-                // CRITICAL FIX: Push the extracted file pointer to the JS DOM before rawData goes out of scope
-                EM_ASM({
-                    if (typeof window.onFileExtracted === 'function') {
-                        window.onFileExtracted(UTF8ToString($0), $1, $2);
-                    }
-                }, nodePath.c_str(), rawData.data() + nodeOffset, nodeSize);
-            }
-            
-            std::cout << "[C++ Engine] Unity SerializedFile deserialization and LZ4 sequence finished processing memory target." << std::endl;
+                if (compressionMode == 2 || compressionMode == 3) {
+                    int decompressedSize = LZ4_decompress_safe(
+                        (const char*)(buffer + blocksInfo),
+                        (char*)uncompressedBlocksInfo.data(),
+                        compressedBlocksInfoSize,
+                        uncompressedBlocksInfoSize
+                    );
 
+                    if (decompressedSize != uncompressedBlocksInfoSize) {
+                        std::cout << "[C++ Engine] Blocks Info LZ4 Decompression failed. Skipping..." << std::endl;
+                        if (totalSize > 0 && search_offset + totalSize <= file_size) search_offset += totalSize - 1;
+                        continue;
+                    }
+                } else if (compressionMode == 0) {
+                    std::memcpy(uncompressedBlocksInfo.data(), buffer + blocksInfo, uncompressedBlocksInfoSize);
+                }
+
+                size_t infoOffset = 16;
+                uint32_t blocksCount = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
+                infoOffset += 4;
+                
+                struct DataBlock {
+                    uint32_t uncompressedSize;
+                    uint32_t compressedSize;
+                    uint16_t flags;
+                };
+
+                std::vector<DataBlock> dataBlocks(blocksCount);
+                uint64_t totalUncompressedDataSize = 0;
+
+                for (uint32_t i = 0; i < blocksCount; i++) {
+                    dataBlocks[i].uncompressedSize = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
+                    infoOffset += 4;
+                    dataBlocks[i].compressedSize = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
+                    infoOffset += 4;
+                    dataBlocks[i].flags = bswap16(*(uint16_t*)(uncompressedBlocksInfo.data() + infoOffset));
+                    infoOffset += 2;
+                    totalUncompressedDataSize += dataBlocks[i].uncompressedSize;
+                }
+
+                std::vector<uint8_t> rawData(totalUncompressedDataSize);
+                uint64_t currentReadOffset = dataStart;
+                uint64_t currentWriteOffset = 0;
+                bool extract_success = true;
+
+                for (uint32_t i = 0; i < blocksCount; i++) {
+                    uint16_t blockCompression = dataBlocks[i].flags & 0x3F;
+
+                    if (blockCompression == 2 || blockCompression == 3) {
+                        int res = LZ4_decompress_safe(
+                            (const char*)(buffer + currentReadOffset),
+                            (char*)(rawData.data() + currentWriteOffset),
+                            dataBlocks[i].compressedSize,
+                            dataBlocks[i].uncompressedSize
+                        );
+                        if (res < 0) extract_success = false;
+                    } else if (blockCompression == 0) {
+                        std::memcpy(rawData.data() + currentWriteOffset, buffer + currentReadOffset, dataBlocks[i].compressedSize);
+                    }
+
+                    currentReadOffset += dataBlocks[i].compressedSize;
+                    currentWriteOffset += dataBlocks[i].uncompressedSize;
+                }
+
+                if (!extract_success) {
+                    std::cout << "[C++ Engine] LZ4 payload extraction failed. Skipping block..." << std::endl;
+                    if (totalSize > 0 && search_offset + totalSize <= file_size) search_offset += totalSize - 1;
+                    continue;
+                }
+
+                uint32_t nodesCount = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
+                infoOffset += 4;
+
+                for (uint32_t i = 0; i < nodesCount; i++) {
+                    uint64_t nodeOffset = bswap64(*(uint64_t*)(uncompressedBlocksInfo.data() + infoOffset));
+                    infoOffset += 8;
+                    uint64_t nodeSize = bswap64(*(uint64_t*)(uncompressedBlocksInfo.data() + infoOffset));
+                    infoOffset += 8;
+                    uint32_t nodeStatus = bswap32(*(uint32_t*)(uncompressedBlocksInfo.data() + infoOffset));
+                    infoOffset += 4;
+
+                    std::string nodePath;
+                    while (uncompressedBlocksInfo[infoOffset] != '\0') {
+                        nodePath += (char)uncompressedBlocksInfo[infoOffset];
+                        infoOffset++;
+                    }
+                    infoOffset++; 
+
+                    std::cout << "[C++ Engine] Extracted: " << nodePath << " (" << nodeSize << " bytes)" << std::endl;
+                    
+                    EM_ASM({
+                        if (typeof window.onFileExtracted === 'function') {
+                            window.onFileExtracted(UTF8ToString($0), $1, $2);
+                        }
+                    }, nodePath.c_str(), rawData.data() + nodeOffset, nodeSize);
+                }
+                
+                std::cout << "[C++ Engine] Finished processing embedded UnityFS archive." << std::endl;
+                
+                // Fast-forward the search pointer past the processed archive
+                if (totalSize > 0 && search_offset + totalSize <= file_size) {
+                    search_offset += totalSize - 1; 
+                }
+            }
+        }
+
+        if (!found_unityfs) {
+            std::cout << "[C++ Engine] No UnityFS signatures found inside the file payload." << std::endl;
+            EM_ASM({
+                document.getElementById('status').innerText = "Validation Failed: File does not contain Unity asset data.";
+                document.getElementById('status').style.color = "#f44336";
+            });
         } else {
-            std::cout << "[C++ Engine] VALIDATION FAILED: Invalid signature at allocated pointer." << std::endl;
+            std::cout << "[C++ Engine] Scanning complete. All embedded assets extracted." << std::endl;
         }
     }
 
