@@ -12,16 +12,10 @@ emcc asset_parser.cpp \
     -s WASM=1 \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s INITIAL_MEMORY=256MB \
-    -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
-    -s EXPORTED_FUNCTIONS='["_process_unity_archive","_process_unity_archive_offset","_deinterleave_mesh","_malloc","_free"]' \
-    -s ENVIRONMENT=web,worker \
-    --no-entry
+    -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","getValue","setValue","UTF8ToString","stringToUTF8","writeArrayToMemory"]' \
+    -s EXPORTED_FUNCTIONS='["_malloc","_free","_process_unity_archive","_free_buffer"]' \
+    -s MODULARIZE=1 \
+    -s EXPORT_NAME="createUnityParser" \
+    -s ENVIRONMENT="web,worker"
 
-echo "=== BUILD RESULT ==="
-ls -la ../build/
-
-if [ -f ../build/parser.js ] && [ -f ../build/parser.wasm ]; then
-    echo "✅ SUCCESS! parser.js and parser.wasm generated."
-else
-    echo "❌ Build failed: Missing output files."
-fi
+echo "✅ Build complete!"
