@@ -15,6 +15,31 @@ let assetCount = 0;
 
 let scene, camera, renderer, currentModelMesh;
 
+// --- UI State Management ---
+function setStatus(state, message) {
+    statusBadge.textContent = message;
+    statusBadge.className = "backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border uppercase tracking-widest transition-all duration-300 ";
+    
+    if (state === 'idle') {
+        statusBadge.className += "bg-zinc-900/80 border-zinc-700 text-zinc-400";
+    } else if (state === 'working') {
+        statusBadge.className += "bg-blue-900/80 border-blue-700 text-blue-400 animate-pulse";
+    } else if (state === 'extracting') {
+        statusBadge.className += "bg-amber-900/80 border-amber-700 text-amber-400 animate-pulse";
+    } else if (state === 'error') {
+        statusBadge.className += "bg-red-900/80 border-red-700 text-red-400";
+    }
+}
+
+function log(msg, type = 'info') {
+    const entry = document.createElement('div');
+    entry.className = type === 'success' ? 'text-emerald-400' : type === 'error' ? 'text-red-400 font-bold' : type === 'warning' ? 'text-amber-400' : 'text-zinc-400';
+    entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logs.appendChild(entry);
+    logs.scrollTop = logs.scrollHeight;
+}
+
+// --- Three.js Setup ---
 function initThree() {
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
@@ -43,28 +68,30 @@ function initThree() {
     });
 }
 
-function log(msg, type = 'info') {
-    const entry = document.createElement('div');
-    entry.className = type === 'success' ? 'text-emerald-400' : type === 'error' ? 'text-red-400' : 'text-zinc-400';
-    entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-    logs.appendChild(entry);
-    logs.scrollTop = logs.scrollHeight;
-}
-
+// --- Worker Setup ---
 function initWorker() {
     try {
         worker = new Worker('js/worker.js');
+        
         worker.onmessage = (e) => {
             const { type, data, logType } = e.data;
             if (type === 'LOG') log(data, logType);
+            else if (type === 'STATUS') setStatus(data.state, data.message);
             else if (type === 'ASSET_FOUND_META') handleAssetDiscovery(data);
             else if (type === 'ASSET_EXTRACTED') handleExtractedAsset(data);
         };
+
+        worker.onerror = (err) => {
+            log(`CRITICAL WORKER ERROR: ${err.message}`, 'error');
+            setStatus('error', 'WORKER CRASHED');
+        };
     } catch (err) { 
         log(`Failed to create worker: ${err.message}`, 'error'); 
+        setStatus('error', 'WORKER INIT FAILED');
     }
 }
 
+// --- Asset Handling ---
 function handleAssetDiscovery(data) {
     if (seen.has(data.name)) return;
     seen.add(data.name);
@@ -90,9 +117,8 @@ function handleAssetDiscovery(data) {
     `;
 
     item.querySelector('button').onclick = () => {
-        log(`Extracting: ${data.name.split('/').pop()}`);
-        statusBadge.textContent = 'EXTRACTING...';
-        statusBadge.className = "bg-amber-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-amber-700 uppercase tracking-widest text-amber-400";
+        log(`Requesting extraction: ${data.name.split('/').pop()}`);
+        setStatus('extracting', 'EXTRACTING DATA...');
         
         worker.postMessage({ 
             type: 'EXTRACT_ASSET', 
@@ -108,8 +134,7 @@ function handleAssetDiscovery(data) {
 function handleExtractedAsset(data) {
     const { name, buffer, isContainer } = data;
     log(`Unpacked ${name} (${buffer.byteLength} bytes)`, 'success');
-    statusBadge.textContent = 'SYSTEM IDLE';
-    statusBadge.className = "bg-zinc-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-zinc-700 uppercase tracking-widest text-zinc-400";
+    setStatus('idle', 'SYSTEM IDLE');
 
     const blob = new Blob([buffer]);
     const url = URL.createObjectURL(blob);
@@ -120,6 +145,7 @@ function handleExtractedAsset(data) {
     URL.revokeObjectURL(url);
 }
 
+// --- File Drop Handling ---
 function handleFile(file) {
     if (!file) return;
     currentFile = file;
@@ -132,8 +158,7 @@ function handleFile(file) {
     scanProgress.textContent = '0 found';
 
     log(`Mounted Target: ${file.name}`, 'success');
-    statusBadge.textContent = 'SCANNING APK...';
-    statusBadge.className = "bg-blue-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-blue-700 uppercase tracking-widest text-blue-400";
+    setStatus('working', 'SCANNING APK...');
     
     if (worker) worker.postMessage({ type: 'PROCESS_FILE', file: file });
 }
@@ -148,5 +173,6 @@ dropZone.addEventListener('drop', e => {
     if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
 });
 
+setStatus('idle', 'SYSTEM IDLE');
 initThree();
 initWorker();
