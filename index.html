@@ -1,210 +1,68 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full bg-zinc-950 text-zinc-100">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WASM UnityFS Asset Parser</title>
+    <title>Unity APK Extractor & Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-    <div class="container">
-        <h1>UnityFS Archive Parser</h1>
-        <p>Select an APK or Unity archive to decompress and parse locally via WebAssembly.</p>
-        
-        <div class="upload-section">
-            <input type="file" id="file-input" accept="*/*" />
-            <label for="file-input" id="file-label">Choose APK File...</label>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <header class="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900">
+        <h1 class="font-bold text-lg text-amber-500 tracking-tight">Unity APK Extractor 2.0</h1>
+        <div id="dropZone" class="cursor-pointer border-2 border-dashed border-zinc-700 px-6 py-2 rounded-lg hover:border-blue-500 hover:bg-zinc-800 transition-all duration-200">
+            <span class="text-sm font-semibold">Load APK</span>
+            <input type="file" id="fileInput" class="hidden">
         </div>
+    </header>
 
-        <div class="tabs">
-            <button class="tab-link active" onclick="openTab(event, 'LiveScanner')">Live Scanner</button>
-            <button class="tab-link" onclick="openTab(event, 'Models')">Models</button>
-            <button class="tab-link" onclick="openTab(event, 'Files')">Files</button>
-        </div>
+    <main class="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
 
-        <div id="LiveScanner" class="tab-content active">
-            <div id="status" class="status-box">Awaiting WASM initialization...</div>
-            <div id="log-output" class="log-console"></div>
-        </div>
-
-        <div id="Models" class="tab-content">
-            <div class="placeholder-text" id="models-placeholder">Extracted 3D meshes will populate here.</div>
-            <div id="model-container"></div>
-        </div>
-
-        <div id="Files" class="tab-content">
-            <div class="placeholder-text" id="files-placeholder">Parsed archive hierarchy will populate here.</div>
-            <div id="file-tree"></div>
-        </div>
-    </div>
-
-    <script>
-        window.extractedFiles = {};
-
-        // Hard-bound global function accessed by C++ EM_ASM Macro
-        window.onFileExtracted = function(fileName, ptr, size) {
-            if (!Module || !Module.HEAPU8) {
-                console.error("[JS Bridge Error] WASM Memory Heap is entirely inaccessible.");
-                return;
-            }
-
-            try {
-                // Safely copy the extracted buffer out of WASM isolation
-                const fileData = new Uint8Array(Module.HEAPU8.buffer, ptr, size).slice();
-                window.extractedFiles[fileName] = fileData;
+        <section id="viewport" class="flex-1 bg-black rounded-2xl border border-zinc-800 relative overflow-hidden shadow-inner">
+            <canvas id="renderCanvas" class="w-full h-full block"></canvas>
+            
+            <div id="gui-overlay" class="absolute inset-0 pointer-events-none p-6 flex flex-col justify-between">
+                <div class="flex justify-between">
+                    <div id="status-badge" class="bg-zinc-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-zinc-700 uppercase tracking-widest text-zinc-400">
+                        System Idle
+                    </div>
+                </div>
                 
-                updateFilesTab(fileName, fileData);
-                
-                if (fileName.includes('.assets') || fileName.includes('.obj') || fileName.includes('.mesh')) {
-                    updateModelsTab(fileName, fileData);
-                }
-            } catch (err) {
-                console.error("[JS Bridge Error] Failed to slice extracted file:", err);
-            }
-        };
+                <div class="flex justify-between items-end">
+                    <div class="w-24 h-24 border-4 border-zinc-500/30 rounded-full flex items-center justify-center pointer-events-auto cursor-pointer hover:border-zinc-400/50 transition">
+                        <div class="w-8 h-8 bg-zinc-500/50 rounded-full"></div>
+                    </div>
+                    <div class="flex gap-4">
+                        <div class="w-12 h-12 border-4 border-zinc-500/30 rounded-full pointer-events-auto cursor-pointer hover:bg-zinc-800/50 transition"></div>
+                        <div class="w-12 h-12 border-4 border-zinc-500/30 rounded-full pointer-events-auto cursor-pointer hover:bg-zinc-800/50 transition"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
 
-        function updateFilesTab(fileName, fileData) {
-            document.getElementById('files-placeholder').style.display = 'none';
-            const container = document.getElementById('file-tree');
-
-            const item = document.createElement('div');
-            item.className = 'file-item';
+        <section class="h-1/3 grid grid-cols-3 gap-4">
+            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4 overflow-hidden">
+                <h2 class="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-widest flex justify-between">
+                    <span>Live Scanner</span>
+                    <span id="scan-progress" class="text-emerald-500"></span>
+                </h2>
+                <div id="logs" class="flex-1 overflow-y-auto text-[10px] font-mono leading-relaxed text-zinc-400 space-y-1"></div>
+            </div>
             
-            const mbSize = (fileData.length / 1024 / 1024).toFixed(3);
-            item.innerHTML = `<span class="file-name">📄 ${fileName}</span><span class="file-size">${mbSize} MB</span>`;
+            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4 overflow-hidden">
+                <h2 class="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-widest">3D Models</h2>
+                <ul id="modelList" class="flex-1 overflow-y-auto space-y-1"></ul>
+            </div>
             
-            const btn = document.createElement('button');
-            btn.className = 'download-btn';
-            btn.innerText = 'Download';
-            btn.onclick = () => downloadBlob(fileData, fileName);
-            
-            item.appendChild(btn);
-            container.appendChild(item);
-        }
+            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4 overflow-hidden">
+                <h2 class="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-widest">All Assets</h2>
+                <ul id="assetList" class="flex-1 overflow-y-auto space-y-1"></ul>
+            </div>
+        </section>
+    </main>
 
-        function updateModelsTab(fileName, fileData) {
-            document.getElementById('models-placeholder').style.display = 'none';
-            const container = document.getElementById('model-container');
-
-            const item = document.createElement('div');
-            item.className = 'file-item model-item';
-            item.innerHTML = `<span class="file-name">🧊 ${fileName}</span>`;
-            
-            const btn = document.createElement('button');
-            btn.className = 'action-btn';
-            btn.innerText = 'Init Mesh Deinterleave';
-            btn.onclick = () => {
-                alert(`Target layout offset data ready for transfer. Passing to C++ _deinterleave_mesh.`);
-            };
-            
-            item.appendChild(btn);
-            container.appendChild(item);
-        }
-
-        function downloadBlob(data, name) {
-            const blob = new Blob([data], { type: 'application/octet-stream' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = name;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-
-        function openTab(evt, tabName) {
-            var i, tabcontent, tablinks;
-            tabcontent = document.getElementsByClassName("tab-content");
-            for (i = 0; i < tabcontent.length; i++) {
-                tabcontent[i].style.display = "none";
-                tabcontent[i].classList.remove("active-content");
-            }
-            tablinks = document.getElementsByClassName("tab-link");
-            for (i = 0; i < tablinks.length; i++) {
-                tablinks[i].className = tablinks[i].className.replace(" active", "");
-            }
-            document.getElementById(tabName).style.display = "block";
-            document.getElementById(tabName).classList.add("active-content");
-            evt.currentTarget.className += " active";
-        }
-    </script>
-
-    <script>
-        var Module = {
-            preRun: [],
-            postRun: [],
-            print: (function() {
-                return function(text) {
-                    console.log(text);
-                    const logConsole = document.getElementById('log-output');
-                    if (logConsole) {
-                        logConsole.innerHTML += text + '<br>';
-                        logConsole.scrollTop = logConsole.scrollHeight;
-                    }
-                };
-            })(),
-            printErr: function(text) {
-                console.error(text);
-                const logConsole = document.getElementById('log-output');
-                if (logConsole) {
-                    logConsole.innerHTML += '<span style="color: #ff5252; font-weight: bold;">[ERROR] ' + text + '</span><br>';
-                    logConsole.scrollTop = logConsole.scrollHeight;
-                }
-            },
-            onRuntimeInitialized: function() {
-                document.getElementById('status').innerText = "WASM Engine Ready. Awaiting file.";
-                document.getElementById('status').style.color = "#4CAF50";
-            }
-        };
-    </script>
-    
-    <script src="build/parser.js"></script>
-
-    <script>
-        const fileInput = document.getElementById('file-input');
-        const fileLabel = document.getElementById('file-label');
-        const statusDiv = document.getElementById('status');
-        const logConsole = document.getElementById('log-output');
-
-        fileInput.addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            fileLabel.innerText = file.name;
-            statusDiv.innerText = "Reading file into memory...";
-            statusDiv.style.color = "#ff9800";
-            logConsole.innerHTML = ""; 
-            
-            // Clean UI state for new parse iterations
-            document.getElementById('file-tree').innerHTML = '';
-            document.getElementById('model-container').innerHTML = '';
-            document.getElementById('files-placeholder').style.display = 'block';
-            document.getElementById('models-placeholder').style.display = 'block';
-            window.extractedFiles = {};
-
-            const reader = new FileReader();
-            reader.onload = function(event) {
-                statusDiv.innerText = "Processing via C++ WASM Engine...";
-                try {
-                    const arrayBuffer = event.target.result;
-                    const uint8Array = new Uint8Array(arrayBuffer);
-
-                    const ptr = Module._malloc(uint8Array.length);
-                    Module.HEAPU8.set(uint8Array, ptr);
-
-                    Module._process_unity_archive(ptr, uint8Array.length);
-
-                    Module._free(ptr);
-                    
-                    statusDiv.innerText = "Processing Complete. View extracted data in tabs.";
-                    statusDiv.style.color = "#4CAF50";
-                } catch (err) {
-                    statusDiv.innerText = "Error during memory execution.";
-                    statusDiv.style.color = "#f44336";
-                    Module.printErr(err.message);
-                }
-            };
-            reader.readAsArrayBuffer(file);
-        });
-    </script>
+    <script src="js/main.js"></script>
 </body>
 </html>
