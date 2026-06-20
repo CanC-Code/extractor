@@ -1,5 +1,8 @@
 // js/worker.js
 
+let isWasmReady = false;
+let messageQueue = [];
+
 var Module = {
     locateFile: function(path, prefix) {
         if (path.endsWith('.wasm')) {
@@ -20,30 +23,49 @@ try {
     if (typeof createUnityParser === 'function') {
         self.postMessage({ type: 'LOG', logType: 'info', data: 'Instantiating WASM Module...' });
         
-        // Wait for the Promise to resolve BEFORE sending the READY signal.
-        // This guarantees self.Module is the fully constructed instance with HEAPU8.
         createUnityParser(Module).then((instance) => {
             self.Module = instance;
+            isWasmReady = true;
+            
             self.postMessage({ type: 'LOG', logType: 'info', data: '✅ WASM Runtime Initialized Successfully.' });
             self.postMessage({ type: 'READY' });
+            
+            // Process any tasks that were queued while WASM was loading
+            while (messageQueue.length > 0) {
+                const queuedEvent = messageQueue.shift();
+                processMessage(queuedEvent);
+            }
+            
         }).catch((err) => {
             self.postMessage({ type: 'ERROR', command: 'init', error: `WASM Instantiation failed: ${err.message}` });
         });
     } else {
         self.Module = Module;
-        self.postMessage({ type: 'READY' }); // Fallback for older emscripten behavior
+        isWasmReady = true;
+        self.postMessage({ type: 'READY' });
+        
+        while (messageQueue.length > 0) {
+            processMessage(messageQueue.shift());
+        }
     }
 } catch (error) {
     self.postMessage({ type: 'ERROR', command: 'init', error: `Fatal import error: ${error.message}` });
 }
 
+// Intercept incoming messages and queue them if WASM isn't ready
 self.onmessage = function(event) {
-    const { command, payload } = event.data;
-
-    if (!self.Module || !self.Module.HEAPU8) {
-        self.postMessage({ type: 'ERROR', command: command, error: 'WASM Runtime or HEAPU8 not initialized yet. Please wait for the READY signal.' });
+    if (!isWasmReady || !self.Module || !self.Module.HEAPU8) {
+        self.postMessage({ type: 'LOG', logType: 'info', data: '[JS] WASM initializing, queuing request...' });
+        messageQueue.push(event);
         return;
     }
+    
+    processMessage(event);
+};
+
+// Core processing logic safely decoupled from the message listener
+function processMessage(event) {
+    const { command, payload } = event.data;
 
     try {
         switch (command) {
@@ -58,12 +80,10 @@ self.onmessage = function(event) {
                     self.postMessage({ type: 'LOG', logType: 'info', data: `[JS] Allocating WASM heap for ${size} bytes...` });
                     const dataPtr = self.Module._malloc(size);
                     
-                    // Critical safety check for massive files
                     if (dataPtr === 0) {
                         throw new Error(`WASM out of memory: Failed to allocate ${size} bytes.`);
                     }
 
-                    // HEAPU8 is now strictly guaranteed to exist
                     self.Module.HEAPU8.set(uint8View, dataPtr);
 
                     self.postMessage({ type: 'LOG', logType: 'info', data: `[JS] Executing process_unity_archive in C++...` });
@@ -124,4 +144,4 @@ self.onmessage = function(event) {
     } catch (error) {
         self.postMessage({ type: 'ERROR', command: command, error: error.message });
     }
-};
+}
