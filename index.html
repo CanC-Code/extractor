@@ -1,63 +1,119 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full bg-zinc-950 text-zinc-100">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Unity APK Extractor & Viewer</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <title>WASM UnityFS Asset Parser</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="h-screen flex flex-col overflow-hidden">
-
-    <header class="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900">
-        <h1 class="font-bold text-lg text-amber-500 tracking-tight">Unity APK Extractor 2.0</h1>
-        <div id="dropZone" class="cursor-pointer border-2 border-dashed border-zinc-700 px-6 py-2 rounded-lg hover:border-blue-500 hover:bg-zinc-800 transition-all duration-200">
-            <span class="text-sm">Load APK</span>
-            <input type="file" id="fileInput" class="hidden">
+<body>
+    <div class="container">
+        <h1>UnityFS Archive Parser</h1>
+        <p>Select an APK or Unity archive to decompress and parse locally via WebAssembly.</p>
+        
+        <div class="upload-section">
+            <input type="file" id="file-input" accept=".apk, application/vnd.android.package-archive, .unity3d, .assets, .bundle, .zip" />
+            <label for="file-input" id="file-label">Choose APK File...</label>
         </div>
-    </header>
 
-    <main class="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
+        <div id="status" class="status-box">Awaiting WASM initialization...</div>
+        
+        <div id="log-output" class="log-console"></div>
+    </div>
 
-        <section id="viewport" class="flex-1 bg-black rounded-2xl border border-zinc-800 relative overflow-hidden shadow-inner">
-            <canvas id="renderCanvas" class="w-full h-full block"></canvas>
+    <script>
+        // Initialize Emscripten Module configuration before script loads
+        var Module = {
+            preRun: [],
+            postRun: [],
+            print: (function() {
+                return function(text) {
+                    if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                    console.log(text);
+                    const logConsole = document.getElementById('log-output');
+                    if (logConsole) {
+                        logConsole.innerHTML += text + '<br>';
+                        logConsole.scrollTop = logConsole.scrollHeight;
+                    }
+                };
+            })(),
+            printErr: function(text) {
+                if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                console.error(text);
+                const logConsole = document.getElementById('log-output');
+                if (logConsole) {
+                    logConsole.innerHTML += '<span style="color: red;">' + text + '</span><br>';
+                    logConsole.scrollTop = logConsole.scrollHeight;
+                }
+            },
+            onRuntimeInitialized: function() {
+                document.getElementById('status').innerText = "WASM Engine Ready. Awaiting file.";
+                document.getElementById('status').style.color = "#4CAF50";
+            }
+        };
+    </script>
+    
+    <script src="build/parser.js"></script>
+
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const fileLabel = document.getElementById('file-label');
+        const statusDiv = document.getElementById('status');
+        const logConsole = document.getElementById('log-output');
+
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            fileLabel.innerText = file.name;
+            statusDiv.innerText = "Reading file into memory...";
+            statusDiv.style.color = "#ff9800";
+            logConsole.innerHTML = ""; // Clear previous logs
+
+            const reader = new FileReader();
             
-            <div id="gui-overlay" class="absolute inset-0 pointer-events-none p-6 flex flex-col justify-between">
-                <div class="flex justify-between">
-                    <div id="status-badge" class="bg-zinc-900/60 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-zinc-700 uppercase tracking-widest text-zinc-400">System Idle</div>
-                </div>
+            reader.onload = function(event) {
+                statusDiv.innerText = "Processing via C++ WASM Engine...";
                 
-                <div class="flex justify-between items-end">
-                    <div class="w-24 h-24 border-4 border-zinc-500/30 rounded-full flex items-center justify-center">
-                        <div class="w-4 h-4 bg-zinc-500/50 rounded-full"></div>
-                    </div>
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 border-4 border-zinc-500/30 rounded-full"></div>
-                        <div class="w-12 h-12 border-4 border-zinc-500/30 rounded-full"></div>
-                    </div>
-                </div>
-            </div>
-        </section>
+                try {
+                    const arrayBuffer = event.target.result;
+                    const uint8Array = new Uint8Array(arrayBuffer);
 
-        <section class="h-1/3 grid grid-cols-3 gap-4">
-            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4 overflow-hidden">
-                <h2 class="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-widest">Live Scanner</h2>
-                <div id="logs" class="flex-1 overflow-y-auto text-[10px] font-mono leading-relaxed text-zinc-400 space-y-1"></div>
-            </div>
-            
-            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4 overflow-hidden">
-                <h2 class="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-widest">3D Models</h2>
-                <ul id="modelList" class="flex-1 overflow-y-auto space-y-1"></ul>
-            </div>
-            
-            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4 overflow-hidden">
-                <h2 class="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-widest">All Assets</h2>
-                <ul id="assetList" class="flex-1 overflow-y-auto space-y-1"></ul>
-            </div>
-        </section>
-    </main>
+                    if (!Module._process_unity_archive) {
+                        throw new Error("WASM module not initialized or _process_unity_archive missing.");
+                    }
 
-    <script src="js/main.js"></script>
+                    // Allocate memory inside WASM heap
+                    const ptr = Module._malloc(uint8Array.length);
+                    if (!ptr) {
+                        throw new Error("Failed to allocate memory in WASM heap.");
+                    }
+
+                    // Copy file data into WASM memory
+                    Module.HEAPU8.set(uint8Array, ptr);
+
+                    // Execute C++ logic
+                    Module._process_unity_archive(ptr, uint8Array.length);
+
+                    // Free allocated memory
+                    Module._free(ptr);
+                    
+                    statusDiv.innerText = "Processing Complete.";
+                    statusDiv.style.color = "#4CAF50";
+                } catch (err) {
+                    statusDiv.innerText = "Error during processing.";
+                    statusDiv.style.color = "#f44336";
+                    Module.printErr(err.message);
+                }
+            };
+
+            reader.onerror = function() {
+                statusDiv.innerText = "Failed to read file.";
+                statusDiv.style.color = "#f44336";
+            };
+
+            reader.readAsArrayBuffer(file);
+        });
+    </script>
 </body>
 </html>
