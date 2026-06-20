@@ -1,6 +1,4 @@
 // js/main.js
-console.log("🚀 main.js initialized with 3D viewport support");
-
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
 const logs = document.getElementById('logs');
@@ -33,9 +31,7 @@ function initThree() {
 
     function animate() {
         requestAnimationFrame(animate);
-        if (currentModelMesh) {
-            currentModelMesh.rotation.y += 0.005;
-        }
+        if (currentModelMesh) currentModelMesh.rotation.y += 0.005;
         renderer.render(scene, camera);
     }
     animate();
@@ -75,7 +71,6 @@ function handleAssetDiscovery(data) {
     assetCount++;
     scanProgress.textContent = `${assetCount} found`;
 
-    // Flag Unity Containers that require C++ Unpacking
     const isModelContainer = /\.(assets|resource|ress|bundle|unity3d|assetbundle)$/i.test(data.name) || 
                              /bin\/data\/(level\d+|sharedassets\d+)/i.test(data.name) ||
                              /aa\/.*\.bundle/i.test(data.name); 
@@ -111,12 +106,11 @@ function handleAssetDiscovery(data) {
 }
 
 function handleExtractedAsset(data) {
-    const { name, buffer, isModel } = data;
+    const { name, buffer, isContainer } = data;
     log(`Unpacked ${name} (${buffer.byteLength} bytes)`, 'success');
     statusBadge.textContent = 'SYSTEM IDLE';
     statusBadge.className = "bg-zinc-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-zinc-700 uppercase tracking-widest text-zinc-400";
 
-    // Standard download trigger for unpacked assets
     const blob = new Blob([buffer]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -137,7 +131,7 @@ function handleFile(file) {
     assetCount = 0;
     scanProgress.textContent = '0 found';
 
-    log(`Mounted: ${file.name}`, 'success');
+    log(`Mounted Target: ${file.name}`, 'success');
     statusBadge.textContent = 'SCANNING APK...';
     statusBadge.className = "bg-blue-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-blue-700 uppercase tracking-widest text-blue-400";
     
