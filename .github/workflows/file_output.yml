@@ -21,8 +21,8 @@ jobs:
 
         # Extract strictly tracked files using git ls-files, avoiding build caches and binaries natively
         git ls-files | while read -r file; do
-            # Secondary check for tracked binaries/images
-            if [[ "$file" == *.png || "$file" == *.jpg || "$file" == *.jpeg || "$file" == *.gif || "$file" == *.webp || "$file" == *.apk || "$file" == *.aar || "$file" == *.jar || "$file" == *.keystore || "$file" == *.jks || "$file" == *.class || "$file" == *.ico || "$file" == "$OUTPUT_FILE" ]]; then
+            # Secondary check for tracked binaries/images/wasm/object files
+            if [[ "$file" == *.png || "$file" == *.jpg || "$file" == *.jpeg || "$file" == *.gif || "$file" == *.webp || "$file" == *.apk || "$file" == *.aar || "$file" == *.jar || "$file" == *.keystore || "$file" == *.jks || "$file" == *.class || "$file" == *.ico || "$file" == *.wasm || "$file" == *.o || "$file" == *.obj || "$file" == "$OUTPUT_FILE" ]]; then
                 continue
             fi
             
