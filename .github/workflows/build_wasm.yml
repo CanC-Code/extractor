@@ -44,8 +44,9 @@ jobs:
           
           git commit -m "Auto-compile WASM artifacts" || echo "No changes to commit"
           
-          # Fetch and rebase against the latest remote changes to prevent push rejections
-          git pull --rebase --autostash origin main
+          # Fetch and rebase against the latest remote changes. 
+          # -X theirs automatically resolves binary merge conflicts by favoring the newly compiled files.
+          git pull --rebase --autostash -X theirs origin main
           
           # Push the updated local HEAD explicitly back to the remote main branch
           git push origin HEAD:main
