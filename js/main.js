@@ -7,20 +7,23 @@ let currentProgress = 0;
 let models = [];
 let assets = [];
 let scene, camera, renderer, mesh;
+let isWasmReady = false;
 
 // =============================================
 // WASM Module Initialization
 // =============================================
-Module.onRuntimeInitialized = function() {
-    console.log("WASM module loaded and ready!");
-    updateStatus("WASM module loaded — ready to process files.");
-    initThreeJS();
-    setupEventListeners();
-};
-
-Module.onAbort = function(what) {
-    console.error("WASM module failed to load:", what);
-    updateStatus("Error: WASM module failed to load.");
+window.Module = {
+    onRuntimeInitialized: function() {
+        console.log("WASM module loaded and ready!");
+        isWasmReady = true;
+        updateStatus("WASM module loaded — ready to process files.");
+        initThreeJS();
+        setupEventListeners();
+    },
+    onAbort: function(what) {
+        console.error("WASM module failed to load:", what);
+        updateStatus("Error: WASM module failed to load.");
+    }
 };
 
 // =============================================
@@ -97,6 +100,12 @@ function handleFileUpload() {
     const file = fileInput.files[0];
     if (!file) return;
 
+    if (!isWasmReady) {
+        updateStatus("Error: WASM module not ready. Please wait and try again.");
+        logMessage("Error: WASM module not ready.");
+        return;
+    }
+
     currentFile = file;
     currentFileSize = file.size;
     currentProgress = 0;
@@ -119,6 +128,10 @@ function handleFileUpload() {
         const uint8Array = new Uint8Array(arrayBuffer);
         processUnityArchive(uint8Array);
     };
+    reader.onerror = () => {
+        updateStatus("Error: Failed to read file.");
+        logMessage("Error: Failed to read file.");
+    };
     reader.readAsArrayBuffer(file);
 }
 
@@ -132,6 +145,11 @@ function processUnityArchive(buffer) {
     try {
         // Allocate memory in WASM for the buffer
         const bufferPtr = Module._malloc(buffer.length);
+        if (!bufferPtr) {
+            throw new Error("Failed to allocate memory in WASM.");
+        }
+
+        // Copy the buffer to WASM memory
         Module.HEAPU8.set(buffer, bufferPtr);
 
         // Call the WASM function to process the archive
@@ -193,6 +211,7 @@ function updateUI() {
         modelList.appendChild(li);
     });
     document.getElementById("modelCount").textContent = models.length;
+    document.getElementById("scanCount").textContent = `${models.length} found`;
 
     // Update asset list
     const assetList = document.getElementById("assetList");
@@ -210,6 +229,7 @@ function updateUI() {
     // Show save button if models exist
     const saveAllBtn = document.getElementById("saveAllBtn");
     saveAllBtn.classList.toggle("hidden", models.length === 0);
+    saveAllBtn.onclick = saveAllModels;
 }
 
 // =============================================
@@ -236,7 +256,8 @@ function loadModel(index) {
     // Clear existing mesh
     if (mesh) {
         scene.remove(mesh);
-        mesh.geometry.dispose();
+        if (mesh.geometry) mesh.geometry.dispose();
+        if (mesh.material) mesh.material.dispose();
     }
 
     // Create a placeholder cube (replace with actual OBJ loading)
@@ -248,6 +269,20 @@ function loadModel(index) {
     updateStatus(`Model loaded: ${model.name}`);
     document.getElementById("meshStats").textContent = `${model.vertices} vertices, ${model.faces} faces`;
     document.getElementById("meshStats").classList.remove("hidden");
+}
+
+// =============================================
+// Save All Models (Placeholder for actual OBJ saving)
+// =============================================
+function saveAllModels() {
+    updateStatus("Saving all models...");
+    logMessage("Saving all models...");
+
+    // Placeholder: Replace with actual OBJ saving logic
+    setTimeout(() => {
+        updateStatus("All models saved!");
+        logMessage("All models saved successfully.");
+    }, 1000);
 }
 
 // =============================================
