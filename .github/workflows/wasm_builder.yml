@@ -44,7 +44,8 @@ jobs:
           # Only commit if there are changes
           if ! git diff --cached --quiet; then
             git commit -m "Auto-compile WASM artifacts [skip ci]"
-            git push origin HEAD:main
+            # Pushes to the branch that triggered the action
+            git push origin HEAD 
           else
             echo "No changes to commit."
           fi
