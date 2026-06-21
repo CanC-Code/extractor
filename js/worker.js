@@ -137,8 +137,8 @@ function extractEntry(u8, entry) {
     const fnLen    = dv.getUint16(p + 26, true);
     const extraLen = dv.getUint16(p + 28, true);
     const start    = p + 30 + fnLen + extraLen;
-    if (entry.method === 0) return u8.slice(start, start + entry.cSize); 
-    return null; 
+    if (entry.method === 0) return u8.slice(start, start + entry.cSize);
+    return null;
 }
 
 async function extractEntryAsync(u8, entry) {
@@ -168,44 +168,65 @@ async function extractEntryAsync(u8, entry) {
     } catch(ex) { return null; }
 }
 
-function isBundleCandidate(name) {
-    if (/assets\/[Aa]sset[Aa]ssistant\/syn\/[0-9a-fA-F]{2}\/[0-9a-fA-F]{20,}$/.test(name)) return true;
-    if (/CAB-[0-9a-f]{10,}$/.test(name)) return true;
-    if (/\.(bundle|assets|resource|unity3d)$/i.test(name)) return true;
-    return false;
-}
-
 function isUnityFS(u8) {
     return u8.length >= 7
         && u8[0] === 0x55 && u8[1] === 0x6E && u8[2] === 0x69
         && u8[3] === 0x74 && u8[4] === 0x79 && u8[5] === 0x46 && u8[6] === 0x53;
 }
 
+// Detect a raw Unity SerializedFile (no UnityFS wrapper).
+// Heuristic: metadata size is in the plausible range, file version 9–22,
+// and the data offset doesn't exceed the buffer length.
+function isSerializedFile(u8) {
+    if (u8.length < 16) return false;
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    const metaSize   = dv.getUint32(0, false);
+    const fileSize   = dv.getUint32(4, false);  // stored as BE in older formats
+    const version    = dv.getUint32(8, false);
+    const dataOffset = dv.getUint32(12, false);
+    if (version < 9 || version > 22) return false;
+    if (metaSize <= 0 || metaSize > 10000000) return false;
+    if (dataOffset > u8.length) return false;
+    return true;
+}
+
 // ── Bundle processor ───────────────────────────────────────────
+// Iterates every ZIP entry, extracts its payload, and dispatches to
+// parseUnityFSBundle or parseSerializedFile based on magic/heuristic.
+// The old isBundleCandidate name-filter is intentionally removed so
+// that data files with hash-style names (common in split APKs) are
+// not silently skipped.
 async function processBundles(u8, rawBuf, entries) {
+    // Report every entry to the UI immediately.
     for (const e of entries) {
         postMessage({ type: 'ASSET_FOUND_META', data: { name: e.name, offset: e.localOff, assetType: 'file' } });
         assetCount++;
     }
 
-    const bundles = entries.filter(e => isBundleCandidate(e.name));
-    log(`${bundles.length} UnityFS bundle candidate(s).`, 'system');
+    // Filter out entries that are clearly not Unity data before extracting.
+    // We still skip well-known non-asset extensions to avoid wasting time,
+    // but we no longer require names to match the old isBundleCandidate pattern.
+    const SKIP_EXT = /\.(dex|xml|png|jpg|jpeg|gif|webp|so|txt|json|ini|cfg|proto|kotlin_module|MF|SF|RSA|DSA|properties|gradle|class)$/i;
+    const candidates = entries.filter(e => !SKIP_EXT.test(e.name));
 
-    for (let i = 0; i < bundles.length; i++) {
-        progress(15 + Math.floor((i / bundles.length) * 82));
-        const entry = bundles[i];
+    log(`${candidates.length} candidate entries to probe for Unity data.`, 'system');
+
+    for (let i = 0; i < candidates.length; i++) {
+        progress(15 + Math.floor((i / candidates.length) * 82));
+        const entry = candidates[i];
         const short = lastName(entry.name);
         try {
             const data = await extractEntryAsync(u8, entry);
             if (!data || data.length < 32) continue;
-            if (!isUnityFS(data)) continue;
 
-            log(`Parsing bundle: ${short}`, 'system');
-
-            // The C++ process_unity_archive function is currently a stub.
-            // We route directly to the fully-implemented JavaScript fallback 
-            // to ensure meshes are actually extracted and parsed.
-            parseUnityFSBundle(data, entry.name);
+            if (isUnityFS(data)) {
+                log(`UnityFS bundle: ${short}`, 'system');
+                parseUnityFSBundle(data, entry.name);
+            } else if (isSerializedFile(data)) {
+                log(`Serialized file: ${short}`, 'system');
+                parseSerializedFile(data, entry.name);
+            }
+            // else: not a Unity asset, silently skip
         } catch(err) {
             log(`[${short}] ${err.message}`, 'error');
         }
@@ -307,7 +328,7 @@ function parseUnityFSBundle(u8, sourceName) {
     if (!bi) return;
 
     const biDv = new DataView(bi.buffer, bi.byteOffset, bi.byteLength);
-    let bp = 16; 
+    let bp = 16;
 
     if (bp + 4 > bi.length) return;
     const blockCount = biDv.getUint32(bp, false); bp += 4;
@@ -329,9 +350,9 @@ function parseUnityFSBundle(u8, sourceName) {
     const nodes = [];
     for (let i = 0; i < nodeCount; i++) {
         if (bp + 24 > bi.length) return;
-        bp += 4; const offLo = biDv.getUint32(bp, false); bp += 4; 
-        bp += 4; const szLo  = biDv.getUint32(bp, false); bp += 4; 
-        bp += 4; 
+        bp += 4; const offLo = biDv.getUint32(bp, false); bp += 4;
+        bp += 4; const szLo  = biDv.getUint32(bp, false); bp += 4;
+        bp += 4;
         const ns = bp; while (bp < bi.length && bi[bp] !== 0) bp++; const nodeName = new TextDecoder().decode(bi.slice(ns, bp)); bp++;
         nodes.push({ offset: offLo, size: szLo, name: nodeName });
     }
@@ -363,18 +384,18 @@ function parseSerializedFile(u8, sourceName) {
     const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
     let p = 0;
 
-    p += 4; p += 4; 
+    p += 4; p += 4;
     const version    = dv.getUint32(p, false); p += 4;
     const dataOffset = dv.getUint32(p, false); p += 4;
 
     if (version < 9 || version > 22) return;
-    p += 4; 
+    p += 4;
 
-    while (p < u8.length && u8[p] !== 0) p++; p++; 
+    while (p < u8.length && u8[p] !== 0) p++; p++;
 
     if (version >= 13) {
-        p += 4; 
-        if (version >= 15) p += 1; 
+        p += 4;
+        if (version >= 15) p += 1;
     }
 
     if (p + 4 > u8.length) return;
@@ -386,10 +407,10 @@ function parseSerializedFile(u8, sourceName) {
         if (p + 4 > u8.length) return;
         const cid = dv.getInt32(p, false); p += 4;
         classIds.push(cid);
-        if (version >= 16) p += 3; 
+        if (version >= 16) p += 3;
         if (version >= 13) {
-            if ((version >= 16 && cid === 114) || (version < 16 && cid < 0)) p += 16; 
-            p += 16; 
+            if ((version >= 16 && cid === 114) || (version < 16 && cid < 0)) p += 16;
+            p += 16;
         }
         if (version >= 15) {
             if (p + 8 > u8.length) return;
@@ -448,7 +469,7 @@ function extractMesh(u8, sourceName) {
             const firstByte  = dv.getUint32(p, false); p += 4;
             const indexCount = dv.getUint32(p, false); p += 4;
             const topology   = dv.getInt32(p, false);  p += 4;
-            p += 12; p += 24; 
+            p += 12; p += 24;
             subMeshes.push({ firstByte, indexCount, topology });
         }
 
