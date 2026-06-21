@@ -1,0 +1,52 @@
+name: Build WASM Parser
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/**'
+      - 'src/build.sh'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Emscripten SDK
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-key: emsdk-${{ runner.os }}
+
+      - name: Compile WASM Parser
+        run: |
+          cd src
+          chmod +x build.sh
+          ./build.sh 2>&1 | tee build.log
+        shell: bash
+
+      - name: Commit and Push Built Files
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          # Force add the build directory and its contents
+          git add -f build/
+          git status
+
+          # Only commit if there are changes
+          if ! git diff --cached --quiet; then
+            git commit -m "Auto-compile WASM artifacts [skip ci]"
+            git push origin HEAD:main
+          else
+            echo "No changes to commit."
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
