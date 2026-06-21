@@ -2,63 +2,89 @@
 <html lang="en" class="h-full bg-zinc-950 text-zinc-100">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Unity APK Extractor & Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Unity APK Extractor</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body class="h-screen flex flex-col overflow-hidden">
 
-    <header class="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900">
-        <h1 class="font-bold text-lg text-amber-500 tracking-tight">Unity APK Extractor 2.0</h1>
-        <div id="dropZone" class="cursor-pointer border-2 border-dashed border-zinc-700 px-6 py-2 rounded-lg hover:border-blue-500 hover:bg-zinc-800 transition-all duration-200">
-            <span class="text-sm font-semibold">Load APK</span>
-            <input type="file" id="fileInput" class="hidden">
+    <header class="flex-shrink-0 px-4 py-3 border-b border-zinc-800 flex items-center gap-3 bg-zinc-900">
+        <span class="font-bold text-amber-500 tracking-tight text-base whitespace-nowrap">Unity APK Extractor</span>
+
+        <!-- File picker: label wraps visible button + hidden input -->
+        <label id="dropZone"
+               class="cursor-pointer border border-dashed border-zinc-600 hover:border-blue-400 hover:bg-zinc-800
+                      transition rounded px-4 py-1.5 text-xs font-semibold select-none flex-shrink-0">
+            📂 Load APK / Bundle
+            <input type="file" id="fileInput" accept=".apk,.bundle,.assets,.zip,.split0,.split1" class="hidden">
+        </label>
+
+        <!-- Progress bar -->
+        <div class="flex-1 flex flex-col gap-1 min-w-0">
+            <span id="statusText" class="text-[10px] font-mono text-emerald-400 truncate">Idle — select a file to begin.</span>
+            <progress id="progressBar" value="0" max="100"
+                      class="w-full h-1 rounded appearance-none [&::-webkit-progress-bar]:bg-zinc-700
+                             [&::-webkit-progress-value]:bg-emerald-500 [&::-moz-progress-bar]:bg-emerald-500"></progress>
         </div>
+
+        <!-- Save all button (hidden until models found) -->
+        <button id="saveAllBtn"
+                class="hidden flex-shrink-0 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500
+                       transition rounded px-3 py-1.5 text-white">
+            ⬇ Save All OBJ
+        </button>
     </header>
 
-    <main class="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
-        <section id="viewport" class="flex-1 bg-black rounded-2xl border border-zinc-800 relative overflow-hidden shadow-inner">
+    <main class="flex-1 flex flex-col min-h-0 overflow-hidden p-3 gap-3">
+
+        <!-- 3D Viewport -->
+        <section class="flex-1 relative bg-black rounded-xl border border-zinc-800 overflow-hidden min-h-0">
             <canvas id="renderCanvas" class="w-full h-full block"></canvas>
-            
-            <div id="gui-overlay" class="absolute inset-0 pointer-events-none p-6 flex flex-col justify-between">
-                <div class="flex justify-between">
-                    <div id="status-badge" class="bg-zinc-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] border border-zinc-700 uppercase tracking-widest text-zinc-400 transition-all duration-300">
-                        System Idle
-                    </div>
+
+            <div class="absolute top-3 left-3 pointer-events-none">
+                <div id="statusBadge"
+                     class="bg-zinc-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px]
+                            border border-zinc-700 uppercase tracking-widest text-zinc-400">
+                    System Idle
                 </div>
-                
-                <div class="flex justify-between items-end">
-                    <div class="w-24 h-24 border-4 border-zinc-500/30 rounded-full flex items-center justify-center pointer-events-auto cursor-pointer hover:border-zinc-400/50 transition">
-                        <div class="w-8 h-8 bg-zinc-500/50 rounded-full"></div>
-                    </div>
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 border-4 border-zinc-500/30 rounded-full pointer-events-auto cursor-pointer hover:bg-zinc-800/50 transition"></div>
-                        <div class="w-12 h-12 border-4 border-zinc-500/30 rounded-full pointer-events-auto cursor-pointer hover:bg-zinc-800/50 transition"></div>
-                    </div>
-                </div>
+            </div>
+
+            <div id="meshStats"
+                 class="absolute top-3 right-3 bg-zinc-900/80 backdrop-blur-sm border border-zinc-700
+                        rounded px-2 py-1 text-[10px] font-mono text-emerald-400 hidden">
             </div>
         </section>
 
-        <section class="h-1/3 grid grid-cols-3 gap-4">
-            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4 overflow-hidden">
-                <h2 class="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-widest flex justify-between">
+        <!-- Bottom 3-column panel -->
+        <section class="flex-shrink-0 h-48 grid grid-cols-3 gap-3">
+
+            <!-- Live Scanner log -->
+            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-3 overflow-hidden">
+                <h2 class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2 flex justify-between">
                     <span>Live Scanner</span>
-                    <span id="scan-progress" class="text-emerald-500">0 found</span>
+                    <span id="scanCount" class="text-emerald-500">0 found</span>
                 </h2>
-                <div id="logs" class="flex-1 overflow-y-auto text-[10px] font-mono leading-relaxed text-zinc-400 space-y-1"></div>
+                <div id="logs" class="flex-1 overflow-y-auto text-[10px] font-mono leading-relaxed text-zinc-400 space-y-px"></div>
             </div>
-            
-            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4 overflow-hidden">
-                <h2 class="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-widest">Asset Bundles (Models)</h2>
+
+            <!-- Model list -->
+            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-3 overflow-hidden">
+                <h2 class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">
+                    Models (<span id="modelCount">0</span>)
+                </h2>
                 <ul id="modelList" class="flex-1 overflow-y-auto space-y-1"></ul>
             </div>
-            
-            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-4 overflow-hidden">
-                <h2 class="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-widest">All Assets</h2>
-                <ul id="assetList" class="flex-1 overflow-y-auto space-y-1"></ul>
+
+            <!-- All assets list -->
+            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-3 overflow-hidden">
+                <h2 class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">
+                    All Assets (<span id="assetCount">0</span>)
+                </h2>
+                <ul id="assetList" class="flex-1 overflow-y-auto space-y-px"></ul>
             </div>
+
         </section>
     </main>
 
