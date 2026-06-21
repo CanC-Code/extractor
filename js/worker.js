@@ -18,8 +18,8 @@ self.onerror = (message) => { log(`Worker error: ${message}`, 'error'); return t
 // ── Load Wasm engine ───────────────────────────────────────────
 self.Module = {
     locateFile(path) {
-        if (path.endsWith('.wasm')) return '/build/' + path;
-        return '/build/' + path;
+        if (path.endsWith('.wasm')) return '../build/' + path;
+        return '../build/' + path;
     },
     onRuntimeInitialized() {
         wasmModule = self.Module;
