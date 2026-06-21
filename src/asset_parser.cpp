@@ -10,6 +10,13 @@ struct VertexData {
 };
 
 extern "C" {
+    // Function to process Unity archive data
+    void process_unity_archive(unsigned char* buffer, int bufferSize) {
+        // Placeholder implementation: Replace with actual logic
+        if (!buffer || bufferSize <= 0) return;
+        printf("Processing Unity archive of size: %d\n", bufferSize);
+    }
+
     float* deinterleave_mesh(unsigned char* buffer, int numVertices, int positionOffset, int normalOffset, int uvOffset) {
         if (!buffer || numVertices <= 0) return nullptr;
 
@@ -17,7 +24,7 @@ extern "C" {
         if (!outBuffer) return nullptr;
 
         for (int i = 0; i < numVertices; ++i) {
-            unsigned char* vertexPtr = buffer + i * 36; // Assuming 36 bytes per vertex (3 floats for pos, 3 for normal, 2 for UV)
+            unsigned char* vertexPtr = buffer + i * 36; // Assuming 36 bytes per vertex
             if (positionOffset >= 0) {
                 outBuffer[i * 3 + 0] = *(float*)(vertexPtr + positionOffset);
                 outBuffer[i * 3 + 1] = *(float*)(vertexPtr + positionOffset + 4);
