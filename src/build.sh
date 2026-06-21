@@ -9,8 +9,8 @@ emcc asset_parser.cpp -o ../build/parser.js \
     -s WASM=1 \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s INITIAL_MEMORY=268435456 \
-    -s EXPORTED_RUNTIME_METHODS='["ccall", "cwrap", "malloc", "free", "UTF8ToString"]' \
-    -s EXPORTED_FUNCTIONS='["_process_unity_archive", "_malloc", "_free", "_deinterleave_mesh", "_free_buffer"]' || {
+    -s EXPORTED_RUNTIME_METHODS='["ccall", "cwrap", "UTF8ToString"]' \
+    -s EXPORTED_FUNCTIONS='["_process_unity_archive", "_deinterleave_mesh", "_free_buffer"]' || {
         echo "Emscripten compilation failed";
         exit 1;
     }
