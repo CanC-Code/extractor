@@ -38,6 +38,19 @@ window.addEventListener('resize', () => {
     renderer.setSize(container.clientWidth, container.clientHeight);
 });
 
+// Double tap for wireframe
+let isWireframe = false;
+canvas.addEventListener('dblclick', () => {
+    if (currentModel) {
+        isWireframe = !isWireframe;
+        currentModel.traverse((child) => {
+            if (child.isMesh) {
+                child.material.wireframe = isWireframe;
+            }
+        });
+    }
+});
+
 // --- UI Binding ---
 const terminal = document.getElementById('terminal-log');
 const logContainer = document.getElementById('tab-logs');
@@ -53,6 +66,73 @@ function addLog(msg, type = 'normal') {
     terminal.appendChild(div);
     logContainer.scrollTop = logContainer.scrollHeight;
 }
+
+// --- Global UI Window Functions ---
+window.extractedModels = new Map();
+
+window.viewMesh = function(name) {
+    const modelData = window.extractedModels.get(name);
+    if (!modelData) return;
+
+    const loader = new OBJLoader();
+    const object = loader.parse(modelData.objText);
+
+    if (currentModel) scene.remove(currentModel);
+
+    const material = new THREE.MeshStandardMaterial({ 
+        color: 0x00e676, 
+        side: THREE.DoubleSide,
+        roughness: 0.5,
+        metalness: 0.2
+    });
+    
+    object.traverse((child) => {
+        if (child.isMesh) {
+            child.material = material;
+            child.geometry.computeBoundingBox();
+            const center = new THREE.Vector3();
+            child.geometry.boundingBox.getCenter(center);
+            child.geometry.translate(-center.x, -center.y, -center.z);
+        }
+    });
+
+    scene.add(object);
+    currentModel = object;
+
+    camera.position.set(0, 5, 10);
+    controls.target.set(0, 0, 0);
+    controls.update();
+
+    const statsUI = document.getElementById('model-stats');
+    statsUI.classList.remove('hidden');
+    document.getElementById('stat-name').innerText = name;
+    document.getElementById('stat-verts').innerText = `V: ${modelData.vertexCount}`;
+    document.getElementById('stat-faces').innerText = `F: ${modelData.faceCount}`;
+};
+
+window.saveMesh = function(name) {
+    const modelData = window.extractedModels.get(name);
+    if (!modelData) return;
+    
+    const blob = new Blob([modelData.objText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${name}.obj`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+};
+
+window.saveAllModels = function() {
+    if (!window.extractedModels || window.extractedModels.size === 0) return;
+    addLog(`Initiating download for ${window.extractedModels.size} models...`, 'system');
+    
+    window.extractedModels.forEach((modelData, name) => {
+        window.saveMesh(name);
+    });
+};
 
 // --- Worker Setup ---
 let worker;
@@ -74,15 +154,12 @@ worker.onmessage = function(e) {
         statusText.innerText = data;
     } else if (type === 'PROGRESS') {
         document.getElementById('progress-bar').value = data;
-    } else if (type === 'BUNDLE_FOUND') {
-        // Handled entirely by the terminal log for now, prepares offset map for Wasm
     } else if (type === 'ASSET_FOUND_META') {
         if (!uniqueAssets.has(data.name)) {
             uniqueAssets.add(data.name);
             assetCount++;
             document.getElementById('asset-count').innerText = assetCount;
             
-            // Determine asset type for UI coloring
             let typeTag = "UNKNOWN";
             let tagColor = "#888";
             const lowerName = data.name.toLowerCase();
@@ -90,17 +167,47 @@ worker.onmessage = function(e) {
             else if (lowerName.includes('.tex') || lowerName.includes('.png')) { typeTag = "TEXTURE"; tagColor = "#29b6f6"; }
             else if (lowerName.includes('.mat')) { typeTag = "MATERIAL"; tagColor = "#ffca28"; }
             else if (data.name.startsWith('CAB-')) { typeTag = "CABINET"; tagColor = "#ab47bc"; }
+            else if (data.assetType === 'bundle') { typeTag = "BUNDLE"; tagColor = "#f44336"; }
 
             const li = document.createElement('li');
             li.innerHTML = `
                 <div class="asset-info">
                     <span class="asset-name" style="color: ${tagColor}">[${typeTag}] ${data.name}</span>
-                    <span class="asset-meta">Memory Offset: 0x${data.offset.toString(16).toUpperCase()}</span>
+                    <span class="asset-meta">Offset: 0x${data.offset.toString(16).toUpperCase()}</span>
                 </div>
-                <button class="btn-view disabled" disabled style="opacity: 0.5;">WASM Rqrd</button>
             `;
             document.getElementById('asset-list').appendChild(li);
         }
+    } else if (type === 'MODEL_FOUND') {
+        const { name, sourceName, vertexCount, faceCount, objText } = data;
+
+        const li = document.createElement('li');
+        li.className = 'model-card';
+        li.innerHTML = `
+            <div class="mc-info">
+                <span class="mc-badge">OBJ</span>
+                <span class="mc-name">${name}</span>
+                <span class="mc-meta">V: ${vertexCount} · F: ${faceCount}</span>
+                <span class="mc-src">${sourceName}</span>
+            </div>
+            <div class="mc-actions">
+                <button class="btn-view" onclick="window.viewMesh('${name}')">VIEW 3D</button>
+                <button class="btn-save" onclick="window.saveMesh('${name}')">SAVE</button>
+            </div>
+        `;
+        document.getElementById('model-list').appendChild(li);
+
+        const modelCountEl = document.getElementById('model-count');
+        modelCountEl.innerText = parseInt(modelCountEl.innerText) + 1;
+
+        window.extractedModels.set(name, { objText, vertexCount, faceCount });
+
+        document.getElementById('no-models-msg').style.display = 'none';
+        document.getElementById('save-all-btn').style.display = 'inline-flex';
+
+    } else if (type === 'SCAN_COMPLETE') {
+        statusText.innerText = `Complete: ${data.modelCount} mesh(es), ${data.assetCount} assets.`;
+        document.getElementById('progress-bar').value = 100;
     }
 };
 
@@ -116,9 +223,15 @@ fileInput.addEventListener('change', (event) => {
 
     terminal.innerHTML = '';
     document.getElementById('asset-list').innerHTML = '';
+    document.getElementById('model-list').innerHTML = '';
+    document.getElementById('no-models-msg').style.display = 'block';
+    document.getElementById('save-all-btn').style.display = 'none';
+    
     assetCount = 0;
     uniqueAssets.clear();
+    window.extractedModels.clear();
     document.getElementById('asset-count').innerText = "0";
+    document.getElementById('model-count').innerText = "0";
     
     addLog(`MOUNTED: ${file.name}`, 'success');
     addLog(`SIZE: ${(file.size / 1024 / 1024).toFixed(2)} MB`, 'system');
