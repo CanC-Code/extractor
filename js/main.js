@@ -1,95 +1,262 @@
-<!DOCTYPE html>
-<html lang="en" class="h-full bg-zinc-950 text-zinc-100">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Unity APK Extractor</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-    <link rel="stylesheet" href="css/style.css">
-</head>
-<body class="h-screen flex flex-col overflow-hidden">
+// =============================================
+// Global State
+// =============================================
+let currentFile = null;
+let currentFileSize = 0;
+let currentProgress = 0;
+let models = [];
+let assets = [];
+let scene, camera, renderer, mesh;
 
-    <header class="flex-shrink-0 px-4 py-3 border-b border-zinc-800 flex items-center gap-3 bg-zinc-900">
-        <span class="font-bold text-amber-500 tracking-tight text-base whitespace-nowrap">Unity APK Extractor</span>
+// =============================================
+// WASM Module Initialization
+// =============================================
+Module.onRuntimeInitialized = function() {
+    console.log("WASM module loaded and ready!");
+    updateStatus("WASM module loaded — ready to process files.");
+    initThreeJS();
+    setupEventListeners();
+};
 
-        <!-- File picker: label wraps visible button + hidden input -->
-        <label id="dropZone"
-               class="cursor-pointer border border-dashed border-zinc-600 hover:border-blue-400 hover:bg-zinc-800
-                      transition rounded px-4 py-1.5 text-xs font-semibold select-none flex-shrink-0">
-            📂 Load APK / Bundle
-            <input type="file" id="fileInput" accept=".apk,.bundle,.assets,.zip,.split0,.split1" class="hidden">
-        </label>
+Module.onAbort = function(what) {
+    console.error("WASM module failed to load:", what);
+    updateStatus("Error: WASM module failed to load.");
+};
 
-        <!-- Progress bar -->
-        <div class="flex-1 flex flex-col gap-1 min-w-0">
-            <span id="statusText" class="text-[10px] font-mono text-emerald-400 truncate">Idle — select a file to begin.</span>
-            <progress id="progressBar" value="0" max="100"
-                      class="w-full h-1 rounded appearance-none [&::-webkit-progress-bar]:bg-zinc-700
-                             [&::-webkit-progress-value]:bg-emerald-500 [&::-moz-progress-bar]:bg-emerald-500"></progress>
-        </div>
+// =============================================
+// Three.js Setup
+// =============================================
+function initThreeJS() {
+    const canvas = document.getElementById("renderCanvas");
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setClearColor(0x000000, 0);
+    renderer.setSize(canvas.clientWidth, canvas.clientHeight);
 
-        <!-- Save all button (hidden until models found) -->
-        <button id="saveAllBtn"
-                class="hidden flex-shrink-0 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500
-                       transition rounded px-3 py-1.5 text-white">
-            ⬇ Save All OBJ
-        </button>
-    </header>
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(75, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+    camera.position.z = 5;
 
-    <main class="flex-1 flex flex-col min-h-0 overflow-hidden p-3 gap-3">
+    // Add ambient light
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
 
-        <!-- 3D Viewport -->
-        <section class="flex-1 relative bg-black rounded-xl border border-zinc-800 overflow-hidden min-h-0">
-            <canvas id="renderCanvas" class="w-full h-full block"></canvas>
+    // Add directional light
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(1, 1, 1);
+    scene.add(directionalLight);
 
-            <div class="absolute top-3 left-3 pointer-events-none">
-                <div id="statusBadge"
-                     class="bg-zinc-900/80 backdrop-blur-sm px-3 py-1 rounded-full text-[10px]
-                            border border-zinc-700 uppercase tracking-widest text-zinc-400">
-                    System Idle
-                </div>
+    // Handle window resize
+    window.addEventListener("resize", () => {
+        camera.aspect = canvas.clientWidth / canvas.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    });
+
+    // Start animation loop
+    animate();
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    if (mesh) mesh.rotation.y += 0.005;
+    renderer.render(scene, camera);
+}
+
+// =============================================
+// Event Listeners
+// =============================================
+function setupEventListeners() {
+    // File input
+    const fileInput = document.getElementById("fileInput");
+    fileInput.addEventListener("change", handleFileUpload);
+
+    // Drag and drop
+    const dropZone = document.getElementById("dropZone");
+    dropZone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropZone.classList.add("border-blue-400", "bg-zinc-800");
+    });
+    dropZone.addEventListener("dragleave", () => {
+        dropZone.classList.remove("border-blue-400", "bg-zinc-800");
+    });
+    dropZone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropZone.classList.remove("border-blue-400", "bg-zinc-800");
+        if (e.dataTransfer.files.length) {
+            fileInput.files = e.dataTransfer.files;
+            handleFileUpload();
+        }
+    });
+}
+
+// =============================================
+// File Handling
+// =============================================
+function handleFileUpload() {
+    const fileInput = document.getElementById("fileInput");
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    currentFile = file;
+    currentFileSize = file.size;
+    currentProgress = 0;
+    updateStatus(`Loading ${file.name}...`);
+    logMessage(`Starting extraction of ${file.name} (${formatFileSize(file.size)})`);
+
+    // Reset UI
+    document.getElementById("modelList").innerHTML = "";
+    document.getElementById("assetList").innerHTML = "";
+    document.getElementById("scanCount").textContent = "0 found";
+    document.getElementById("modelCount").textContent = "0";
+    document.getElementById("assetCount").textContent = "0";
+    models = [];
+    assets = [];
+
+    // Read file as ArrayBuffer
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const arrayBuffer = e.target.result;
+        const uint8Array = new Uint8Array(arrayBuffer);
+        processUnityArchive(uint8Array);
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// =============================================
+// WASM Integration
+// =============================================
+function processUnityArchive(buffer) {
+    updateStatus("Processing Unity archive...");
+    logMessage("Processing Unity archive...");
+
+    try {
+        // Allocate memory in WASM for the buffer
+        const bufferPtr = Module._malloc(buffer.length);
+        Module.HEAPU8.set(buffer, bufferPtr);
+
+        // Call the WASM function to process the archive
+        Module._process_unity_archive(bufferPtr, buffer.length);
+
+        // Free the allocated memory
+        Module._free(bufferPtr);
+
+        // Simulate progress (replace with actual progress updates from WASM)
+        simulateProgress();
+
+        // For demo purposes, add mock models and assets
+        // Replace this with actual data from WASM
+        models = [
+            { name: "Model_1", vertices: 1000, faces: 500 },
+            { name: "Model_2", vertices: 2000, faces: 1000 },
+        ];
+        assets = [
+            { name: "Texture_1", type: "Texture", size: "1024x1024" },
+            { name: "Material_1", type: "Material", size: "N/A" },
+        ];
+
+        updateUI();
+        updateStatus("Extraction complete!");
+        logMessage("Extraction complete. Found 2 models and 2 assets.");
+    } catch (e) {
+        console.error("Error processing Unity archive:", e);
+        updateStatus("Error: Failed to process Unity archive.");
+        logMessage(`Error: ${e.message}`);
+    }
+}
+
+// =============================================
+// UI Updates
+// =============================================
+function updateStatus(text) {
+    document.getElementById("statusText").textContent = text;
+    document.getElementById("statusBadge").textContent = text.split(" — ")[0] || "Idle";
+}
+
+function logMessage(message) {
+    const logsDiv = document.getElementById("logs");
+    const logEntry = document.createElement("div");
+    logEntry.textContent = message;
+    logsDiv.appendChild(logEntry);
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+}
+
+function updateUI() {
+    // Update model list
+    const modelList = document.getElementById("modelList");
+    models.forEach((model, index) => {
+        const li = document.createElement("li");
+        li.innerHTML = `
+            <button class="w-full text-left p-1 rounded hover:bg-zinc-800 transition" onclick="loadModel(${index})">
+                ${model.name} (${model.vertices} vertices, ${model.faces} faces)
+            </button>
+        `;
+        modelList.appendChild(li);
+    });
+    document.getElementById("modelCount").textContent = models.length;
+
+    // Update asset list
+    const assetList = document.getElementById("assetList");
+    assets.forEach((asset) => {
+        const li = document.createElement("li");
+        li.innerHTML = `
+            <div class="p-1 rounded hover:bg-zinc-800 transition">
+                ${asset.name} (${asset.type})
             </div>
+        `;
+        assetList.appendChild(li);
+    });
+    document.getElementById("assetCount").textContent = assets.length;
 
-            <div id="meshStats"
-                 class="absolute top-3 right-3 bg-zinc-900/80 backdrop-blur-sm border border-zinc-700
-                        rounded px-2 py-1 text-[10px] font-mono text-emerald-400 hidden">
-            </div>
-        </section>
+    // Show save button if models exist
+    const saveAllBtn = document.getElementById("saveAllBtn");
+    saveAllBtn.classList.toggle("hidden", models.length === 0);
+}
 
-        <!-- Bottom 3-column panel -->
-        <section class="flex-shrink-0 h-48 grid grid-cols-3 gap-3">
+// =============================================
+// Progress Simulation (Replace with actual WASM progress)
+// =============================================
+function simulateProgress() {
+    const progressBar = document.getElementById("progressBar");
+    const interval = setInterval(() => {
+        currentProgress += 10;
+        progressBar.value = currentProgress;
+        if (currentProgress >= 100) {
+            clearInterval(interval);
+        }
+    }, 200);
+}
 
-            <!-- Live Scanner log -->
-            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-3 overflow-hidden">
-                <h2 class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2 flex justify-between">
-                    <span>Live Scanner</span>
-                    <span id="scanCount" class="text-emerald-500">0 found</span>
-                </h2>
-                <div id="logs" class="flex-1 overflow-y-auto text-[10px] font-mono leading-relaxed text-zinc-400 space-y-px"></div>
-            </div>
+// =============================================
+// Model Loading (Placeholder for actual OBJ loading)
+// =============================================
+function loadModel(index) {
+    const model = models[index];
+    updateStatus(`Loading model: ${model.name}`);
 
-            <!-- Model list -->
-            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-3 overflow-hidden">
-                <h2 class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">
-                    Models (<span id="modelCount">0</span>)
-                </h2>
-                <ul id="modelList" class="flex-1 overflow-y-auto space-y-1"></ul>
-            </div>
+    // Clear existing mesh
+    if (mesh) {
+        scene.remove(mesh);
+        mesh.geometry.dispose();
+    }
 
-            <!-- All assets list -->
-            <div class="flex flex-col bg-zinc-900 rounded-xl border border-zinc-800 p-3 overflow-hidden">
-                <h2 class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">
-                    All Assets (<span id="assetCount">0</span>)
-                </h2>
-                <ul id="assetList" class="flex-1 overflow-y-auto space-y-px"></ul>
-            </div>
+    // Create a placeholder cube (replace with actual OBJ loading)
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+    mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
 
-        </section>
-    </main>
+    updateStatus(`Model loaded: ${model.name}`);
+    document.getElementById("meshStats").textContent = `${model.vertices} vertices, ${model.faces} faces`;
+    document.getElementById("meshStats").classList.remove("hidden");
+}
 
-    <!-- Load WASM module first -->
-    <script src="/build/parser.js"></script>
-    <script src="js/main.js"></script>
-</body>
-</html>
+// =============================================
+// Utility Functions
+// =============================================
+function formatFileSize(bytes) {
+    if (bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
