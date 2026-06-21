@@ -52,9 +52,9 @@ self.onFileExtracted = function(nodeName, bufferPtr, size, isSerializedContainer
 };
 
 try {
-    importScripts('/build/parser.js');
+    importScripts('../build/parser.js');
 } catch(e) {
-    log('Wasm engine not found at /build/parser.js — using pure-JS fallback.', 'error');
+    log('Wasm engine not found at ../build/parser.js — using pure-JS fallback.', 'error');
 }
 
 // ── ZIP constants ──────────────────────────────────────────────
