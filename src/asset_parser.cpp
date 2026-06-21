@@ -1,85 +1,73 @@
-#include <emscripten.h>
-#include <iostream>
-#include <vector>
-#include <string>
-#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 
-// Force byte alignment to match raw binary memory layouts
-#pragma pack(push, 1)
-struct UnityFSHeader {
-    char signature[8];
-    uint32_t version;
-    char unityVersion[24];
-    char unityRevision[24];
-    uint64_t size;
-    uint32_t compressedDataBlockSize;
-    uint32_t uncompressedDataBlockSize;
-    uint32_t flags;
-};
-
-// Represents the interleaved layout we need to extract
 struct VertexData {
     float x, y, z;
     float nx, ny, nz;
     float u, v;
 };
-#pragma pack(pop)
 
-// Emscripten interface
 extern "C" {
-
-    EMSCRIPTEN_KEEPALIVE
-    void process_unity_archive(unsigned char* data, int size) {
-        if (size < sizeof(UnityFSHeader)) {
-            std::cerr << "File too small to be a valid UnityFS archive." << std::endl;
-            return;
-        }
-
-        UnityFSHeader header;
-        std::memcpy(&header, data, sizeof(UnityFSHeader));
-
-        // Validate Signature
-        if (std::strncmp(header.signature, "UnityFS", 7) != 0) {
-            std::cerr << "Invalid UnityFS signature." << std::endl;
-            return;
-        }
-
-        std::cout << "Valid UnityFS detected. File size: " << header.size << std::endl;
-
-        // NOTE: Full decompression (LZ4/LZMA) logic goes here.
-        // Once decompressed, the logic iterates through the serialized nodes.
-        // For demonstration of the de-interleave structural requirement:
-        
-        /* 
-        int numVertices = ...; // Parsed from mesh header
-        unsigned char* vertexBuffer = ...; // Pointer to raw mesh data
-        std::string objOutput = DeinterleaveMesh(vertexBuffer, numVertices);
-        // Dispatch objOutput back to JS worker
-        */
+    // Function to process Unity archive data
+    void process_unity_archive(unsigned char* buffer, int bufferSize) {
+        // Placeholder implementation: Replace with actual logic
+        if (!buffer || bufferSize <= 0) return;
+        printf("Processing Unity archive of size: %d\n", bufferSize);
     }
 
-    // Mathematical parser for the byte buffer
-    std::string DeinterleaveMesh(unsigned char* buffer, int numVertices) {
-        std::string objData = "";
-        char lineBuffer[128];
+    float* deinterleave_mesh(unsigned char* buffer, int numVertices, int positionOffset, int normalOffset, int uvOffset) {
+        if (!buffer || numVertices <= 0) return nullptr;
 
-        for (int i = 0; i < numVertices; i++) {
-            VertexData* v = reinterpret_cast<VertexData*>(buffer + (i * sizeof(VertexData)));
-            
-            // Output Vertices
-            snprintf(lineBuffer, sizeof(lineBuffer), "v %f %f %f\n", v->x, v->y, v->z);
-            objData += lineBuffer;
+        float* outBuffer = (float*)malloc(numVertices * 8 * sizeof(float));
+        if (!outBuffer) return nullptr;
+
+        for (int i = 0; i < numVertices; ++i) {
+            unsigned char* vertexPtr = buffer + i * 36; // Assuming 36 bytes per vertex
+            if (positionOffset >= 0) {
+                outBuffer[i * 3 + 0] = *(float*)(vertexPtr + positionOffset);
+                outBuffer[i * 3 + 1] = *(float*)(vertexPtr + positionOffset + 4);
+                outBuffer[i * 3 + 2] = *(float*)(vertexPtr + positionOffset + 8);
+            }
+            if (normalOffset >= 0) {
+                outBuffer[numVertices * 3 + i * 3 + 0] = *(float*)(vertexPtr + normalOffset);
+                outBuffer[numVertices * 3 + i * 3 + 1] = *(float*)(vertexPtr + normalOffset + 4);
+                outBuffer[numVertices * 3 + i * 3 + 2] = *(float*)(vertexPtr + normalOffset + 8);
+            }
+            if (uvOffset >= 0) {
+                outBuffer[numVertices * 6 + i * 2 + 0] = *(float*)(vertexPtr + uvOffset);
+                outBuffer[numVertices * 6 + i * 2 + 1] = *(float*)(vertexPtr + uvOffset + 4);
+            }
+        }
+        return outBuffer;
+    }
+
+    char* interleaveMesh_to_obj(unsigned char* buffer, int numVertices) {
+        if (!buffer || numVertices <= 0) return nullptr;
+
+        std::string obj;
+        obj.reserve(numVertices * 120);
+        char line[128];
+
+        VertexData* v = reinterpret_cast<VertexData*>(buffer);
+
+        for (int i = 0; i < numVertices; ++i) {
+            snprintf(line, sizeof(line), "v %.6f %.6f %.6f\n", v[i].x, v[i].y, v[i].z);
+            obj += line;
+        }
+        for (int i = 0; i < numVertices; ++i) {
+            snprintf(line, sizeof(line), "vn %.6f %.6f %.6f\n", v[i].nx, v[i].ny, v[i].nz);
+            obj += line;
         }
 
-        for (int i = 0; i < numVertices; i++) {
-            VertexData* v = reinterpret_cast<VertexData*>(buffer + (i * sizeof(VertexData)));
-            
-            // Output Normals
-            snprintf(lineBuffer, sizeof(lineBuffer), "vn %f %f %f\n", v->nx, v->ny, v->nz);
-            objData += lineBuffer;
-        }
+        char* result = (char*)malloc(obj.size() + 1);
+        if (!result) return nullptr;
+        strcpy(result, obj.c_str());
+        return result;
+    }
 
-        return objData;
+    void free_buffer(void* ptr) {
+        if (ptr) free(ptr);
     }
 }
