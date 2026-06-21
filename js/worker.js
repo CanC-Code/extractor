@@ -1,6 +1,6 @@
 // js/worker.js — Unity APK extraction worker
 // Uses the Wasm C++ engine (build/parser.js) for UnityFS parsing + LZ4.
-// Falls back to pure-JS if Wasm isn't ready.
+// Falls back to pure-JS if Wasm isn't ready or if C++ parser is a stub.
 
 // ── State ─────────────────────────────────────────────────────
 let wasmModule  = null;
@@ -18,24 +18,22 @@ self.onerror = (message) => { log(`Worker error: ${message}`, 'error'); return t
 // ── Load Wasm engine ───────────────────────────────────────────
 self.Module = {
     locateFile(path) {
-        if (path.endsWith('.wasm')) return '../build/' + path;
         return '../build/' + path;
     },
     onRuntimeInitialized() {
         wasmModule = self.Module;
         wasmReady  = true;
-        log('Wasm engine ready.', 'success');
+        log('Wasm engine ready (C++ bindings loaded).', 'success');
     },
     print:    (msg) => log(`[C++] ${msg}`, 'system'),
     printErr: (msg) => log(`[C++ ERR] ${msg}`, 'error'),
 };
 
-// Callback the C++ engine calls per extracted node
 self.onFileExtracted = function(nodeName, bufferPtr, size, isSerializedContainer) {
     if (!wasmModule || size <= 0) return;
 
-    // Copy out of Wasm heap BEFORE any further Wasm calls
-    const heapSlice = new Uint8Array(wasmModule.HEAPU8.buffer, bufferPtr, size);
+    // Use global HEAPU8 which Emscripten exposes in workers
+    const heapSlice = new Uint8Array(self.HEAPU8.buffer, bufferPtr, size);
     const nodeBuf   = new Uint8Array(size);
     nodeBuf.set(heapSlice);
 
@@ -45,7 +43,6 @@ self.onFileExtracted = function(nodeName, bufferPtr, size, isSerializedContainer
     postMessage({ type: 'ASSET_FOUND_META', data: { name: nodeName, offset: 0, assetType: 'bundle' } });
 
     if (isSerializedContainer) {
-        // Parse the serialized file for Mesh objects
         try { parseSerializedFile(nodeBuf, nodeName); }
         catch(e) { /* non-mesh nodes silent */ }
     }
@@ -77,7 +74,6 @@ self.onmessage = async function(e) {
         const u8  = new Uint8Array(buf);
         progress(15);
 
-        // Parse ZIP central directory
         let entries = [];
         try {
             entries = parseZipCD(u8);
@@ -98,7 +94,6 @@ self.onmessage = async function(e) {
 
     } catch(err) {
         log(`Fatal: ${err.message}`, 'error');
-        console.error(err);
     }
 };
 
@@ -142,14 +137,13 @@ function extractEntry(u8, entry) {
     const fnLen    = dv.getUint16(p + 26, true);
     const extraLen = dv.getUint16(p + 28, true);
     const start    = p + 30 + fnLen + extraLen;
-    if (entry.method === 0) return u8.slice(start, start + entry.cSize); // stored
-    return null; // deflate handled async
+    if (entry.method === 0) return u8.slice(start, start + entry.cSize); 
+    return null; 
 }
 
 async function extractEntryAsync(u8, entry) {
     const sync = extractEntry(u8, entry);
     if (sync) return sync;
-    // Deflate via DecompressionStream
     const dv     = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
     const p      = entry.localOff;
     const fnLen    = dv.getUint16(p + 26, true);
@@ -175,7 +169,6 @@ async function extractEntryAsync(u8, entry) {
 }
 
 function isBundleCandidate(name) {
-    // Unity AssetAssistant hash paths (no extension, hex filename)
     if (/assets\/[Aa]sset[Aa]ssistant\/syn\/[0-9a-fA-F]{2}\/[0-9a-fA-F]{20,}$/.test(name)) return true;
     if (/CAB-[0-9a-f]{10,}$/.test(name)) return true;
     if (/\.(bundle|assets|resource|unity3d)$/i.test(name)) return true;
@@ -190,7 +183,6 @@ function isUnityFS(u8) {
 
 // ── Bundle processor ───────────────────────────────────────────
 async function processBundles(u8, rawBuf, entries) {
-    // Report all files as assets
     for (const e of entries) {
         postMessage({ type: 'ASSET_FOUND_META', data: { name: e.name, offset: e.localOff, assetType: 'file' } });
         assetCount++;
@@ -210,17 +202,10 @@ async function processBundles(u8, rawBuf, entries) {
 
             log(`Parsing bundle: ${short}`, 'system');
 
-            if (wasmReady && wasmModule) {
-                // Route through the Wasm C++ engine
-                const ptr = wasmModule._malloc(data.length);
-                if (!ptr) { log(`Malloc failed for ${short}`, 'error'); continue; }
-                wasmModule.HEAPU8.set(data, ptr);
-                wasmModule.ccall('process_unity_archive', null, ['number', 'number'], [ptr, data.length]);
-                wasmModule._free(ptr);
-            } else {
-                // Pure-JS fallback
-                parseUnityFSBundle(data, entry.name);
-            }
+            // The C++ process_unity_archive function is currently a stub.
+            // We route directly to the fully-implemented JavaScript fallback 
+            // to ensure meshes are actually extracted and parsed.
+            parseUnityFSBundle(data, entry.name);
         } catch(err) {
             log(`[${short}] ${err.message}`, 'error');
         }
@@ -239,16 +224,7 @@ async function rawScan(u8) {
     for (let i = 0; i < offsets.length; i++) {
         progress(15 + Math.floor((i / offsets.length) * 82));
         try {
-            if (wasmReady && wasmModule) {
-                const slice = u8.slice(offsets[i]);
-                const ptr   = wasmModule._malloc(slice.length);
-                if (!ptr) continue;
-                wasmModule.HEAPU8.set(slice, ptr);
-                wasmModule.ccall('process_unity_archive', null, ['number', 'number'], [ptr, slice.length]);
-                wasmModule._free(ptr);
-            } else {
-                parseUnityFSBundle(u8.slice(offsets[i]), `raw_${i}`);
-            }
+            parseUnityFSBundle(u8.slice(offsets[i]), `raw_${i}`);
         } catch(ex) {}
     }
 }
@@ -259,8 +235,7 @@ function lastName(path) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// PURE-JS FALLBACK PIPELINE
-// Used when Wasm isn't loaded. Mirrors the C++ logic.
+// PURE-JS PIPELINE
 // ══════════════════════════════════════════════════════════════
 
 const COMP_NONE  = 0, COMP_LZ4 = 2, COMP_LZ4HC = 3;
@@ -303,15 +278,10 @@ function parseUnityFSBundle(u8, sourceName) {
     if (!u8 || u8.length < 48) return;
     const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
 
-    // Skip "UnityFS\0" (8 bytes)
     let p = 8;
-    // format version uint32 BE
     p += 4;
-    // Unity player version string (null-terminated)
     while (p < u8.length && u8[p] !== 0) p++; p++;
-    // Unity engine version string (null-terminated)
     while (p < u8.length && u8[p] !== 0) p++; p++;
-    // File size int64 BE — skip 8 bytes
     p += 8;
 
     if (p + 12 > u8.length) return;
@@ -319,31 +289,25 @@ function parseUnityFSBundle(u8, sourceName) {
     const uiSize = dv.getUint32(p, false); p += 4;
     const flags  = dv.getUint32(p, false); p += 4;
 
-    // p is now the first byte after the fixed header = where data begins
     const dataStart = p;
     const compression = flags & 0x3F;
     const blocksAtEnd = (flags & 0x80) !== 0;
 
-    // Locate blocks-info bytes
     let biBytes;
     if (blocksAtEnd) {
         const biOff = u8.length - ciSize;
-        if (biOff < dataStart || biOff + ciSize > u8.length) {
-            log(`Blocks info OOB: ${lastName(sourceName)}`, 'error'); return;
-        }
+        if (biOff < dataStart || biOff + ciSize > u8.length) return;
         biBytes = u8.slice(biOff, biOff + ciSize);
     } else {
-        if (dataStart + ciSize > u8.length) {
-            log(`Blocks info OOB: ${lastName(sourceName)}`, 'error'); return;
-        }
+        if (dataStart + ciSize > u8.length) return;
         biBytes = u8.slice(dataStart, dataStart + ciSize);
     }
 
     const bi = decomp(biBytes, compression, uiSize);
-    if (!bi) { log(`Blocks info decomp failed: ${lastName(sourceName)}`, 'error'); return; }
+    if (!bi) return;
 
     const biDv = new DataView(bi.buffer, bi.byteOffset, bi.byteLength);
-    let bp = 16; // skip hash
+    let bp = 16; 
 
     if (bp + 4 > bi.length) return;
     const blockCount = biDv.getUint32(bp, false); bp += 4;
@@ -365,14 +329,13 @@ function parseUnityFSBundle(u8, sourceName) {
     const nodes = [];
     for (let i = 0; i < nodeCount; i++) {
         if (bp + 24 > bi.length) return;
-        bp += 4; const offLo = biDv.getUint32(bp, false); bp += 4; // int64 offset, take lo
-        bp += 4; const szLo  = biDv.getUint32(bp, false); bp += 4; // int64 size, take lo
-        bp += 4; // flags
+        bp += 4; const offLo = biDv.getUint32(bp, false); bp += 4; 
+        bp += 4; const szLo  = biDv.getUint32(bp, false); bp += 4; 
+        bp += 4; 
         const ns = bp; while (bp < bi.length && bi[bp] !== 0) bp++; const nodeName = new TextDecoder().decode(bi.slice(ns, bp)); bp++;
         nodes.push({ offset: offLo, size: szLo, name: nodeName });
     }
 
-    // Decompress all data blocks
     let totalU = blocks.reduce((a, b) => a + b.uSz, 0);
     if (totalU === 0 || totalU > 512 * 1024 * 1024) return;
 
@@ -388,7 +351,6 @@ function parseUnityFSBundle(u8, sourceName) {
         rPos += block.cSz;
     }
 
-    // Parse each node
     for (const node of nodes) {
         if (node.size < 48 || node.offset + node.size > fullData.length) continue;
         try { parseSerializedFile(fullData.slice(node.offset, node.offset + node.size), node.name || sourceName); }
@@ -396,25 +358,23 @@ function parseUnityFSBundle(u8, sourceName) {
     }
 }
 
-// ── Unity SerializedFile ───────────────────────────────────────
 function parseSerializedFile(u8, sourceName) {
     if (u8.length < 32) return;
     const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
     let p = 0;
 
-    p += 4; // metaSize
-    p += 4; // fileSize
+    p += 4; p += 4; 
     const version    = dv.getUint32(p, false); p += 4;
     const dataOffset = dv.getUint32(p, false); p += 4;
 
     if (version < 9 || version > 22) return;
-    p += 4; // endian + 3 reserved
+    p += 4; 
 
-    while (p < u8.length && u8[p] !== 0) p++; p++; // unity version string
+    while (p < u8.length && u8[p] !== 0) p++; p++; 
 
     if (version >= 13) {
-        p += 4; // platform
-        if (version >= 15) p += 1; // enableTypeTree
+        p += 4; 
+        if (version >= 15) p += 1; 
     }
 
     if (p + 4 > u8.length) return;
@@ -426,10 +386,10 @@ function parseSerializedFile(u8, sourceName) {
         if (p + 4 > u8.length) return;
         const cid = dv.getInt32(p, false); p += 4;
         classIds.push(cid);
-        if (version >= 16) p += 3; // isStripped + scriptTypeIndex
+        if (version >= 16) p += 3; 
         if (version >= 13) {
-            if ((version >= 16 && cid === 114) || (version < 16 && cid < 0)) p += 16; // scriptID
-            p += 16; // oldTypeHash
+            if ((version >= 16 && cid === 114) || (version < 16 && cid < 0)) p += 16; 
+            p += 16; 
         }
         if (version >= 15) {
             if (p + 8 > u8.length) return;
@@ -461,7 +421,6 @@ function parseSerializedFile(u8, sourceName) {
     }
 }
 
-// ── Mesh → OBJ ────────────────────────────────────────────────
 function extractMesh(u8, sourceName) {
     try {
         const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
@@ -478,7 +437,7 @@ function extractMesh(u8, sourceName) {
         if (seenKeys.has(key)) return;
         seenKeys.add(key);
 
-        p += 24; // Bounds AABB
+        p += 24; // Bounds
 
         if (p + 4 > u8.length) return;
         const smCount = dv.getInt32(p, false); p += 4;
@@ -489,12 +448,11 @@ function extractMesh(u8, sourceName) {
             const firstByte  = dv.getUint32(p, false); p += 4;
             const indexCount = dv.getUint32(p, false); p += 4;
             const topology   = dv.getInt32(p, false);  p += 4;
-            p += 12; // baseVertex, firstVertex, vertexCount
-            p += 24; // localAABB
+            p += 12; p += 24; 
             subMeshes.push({ firstByte, indexCount, topology });
         }
 
-        // Skip blend shapes
+        // Blend shapes
         if (p + 4 > u8.length) return;
         const bsCount = dv.getInt32(p, false); p += 4;
         if (bsCount < 0 || bsCount > 8192) return;
@@ -513,26 +471,22 @@ function extractMesh(u8, sourceName) {
         if (bsfCount < 0 || bsfCount > 1000000) return;
         p += bsfCount * 4;
 
-        // Index buffer
         if (p + 4 > u8.length) return;
         const ibLen = dv.getInt32(p, false); p += 4;
         if (ibLen < 0 || ibLen > 100000000 || p + ibLen > u8.length) return;
         const indexBuf = u8.slice(p, p + ibLen);
         p += ibLen; p = a4(p);
 
-        // Skin
         if (p + 4 > u8.length) return;
         const skinCount = dv.getInt32(p, false); p += 4;
         if (skinCount < 0 || skinCount > 2000000) return;
         p += skinCount * 32;
 
-        // BindPoses
         if (p + 4 > u8.length) return;
         const bpCount = dv.getInt32(p, false); p += 4;
         if (bpCount < 0 || bpCount > 4096) return;
         p += bpCount * 64;
 
-        // VertexData
         if (p + 8 > u8.length) return;
         const vertexCount  = dv.getUint32(p, false); p += 4;
         const channelCount = dv.getUint32(p, false); p += 4;
@@ -648,7 +602,7 @@ function extractMesh(u8, sourceName) {
             data: { name, sourceName, vertexCount, faceCount, objText: lines.join('\n') }
         });
 
-    } catch(e) { /* silent for non-mesh objects */ }
+    } catch(e) { }
 }
 
 function fmtBpe(f) { return f===0?4: f===1?2: f===2?1: f===10?2: f===11?4: 4; }
