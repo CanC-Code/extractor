@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Ensure output directory exists
-mkdir -p ../build || { echo "Failed to create build directory"; exit 1; }
+# Ensure output directory exists (absolute path)
+mkdir -p $(pwd)/../build || { echo "Failed to create build directory"; exit 1; }
 
 # Compile C++ to WebAssembly with Emscripten
-emcc asset_parser.cpp -o ../build/parser.js \
+emcc asset_parser.cpp -o $(pwd)/../build/parser.js \
     -O3 \
     -s WASM=1 \
     -s ALLOW_MEMORY_GROWTH=1 \
@@ -15,4 +15,4 @@ emcc asset_parser.cpp -o ../build/parser.js \
         exit 1;
     }
 
-echo "Build complete. parser.js and parser.wasm generated."
+echo "Build complete. parser.js and parser.wasm generated in $(pwd)/../build/"
