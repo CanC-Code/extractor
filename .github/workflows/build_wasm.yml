@@ -37,8 +37,9 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
-          # Force add the files to bypass any .gitignore restrictions
-          git add -f build/parser.js build/parser.wasm
+          # Force add the build directory and its contents
+          git add -f build/
+          git status
 
           # Only commit if there are changes
           if ! git diff --cached --quiet; then
